@@ -9,16 +9,19 @@ const { initializeTables } = require('./utils/hotelUtils');
 require('dotenv').config();
 
 const corsOptions = {
-  origin: ['http://localhost:3000', 'https://kb2.vercel.app'],
+  origin: ['http://localhost:3000', 'http://localhost:6500', 'https://kb2.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  credentials: true,
+  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
 };
 
 app.use(cors(corsOptions));
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+app.options('/api/hotel/login', cors(corsOptions)); // Handle OPTIONS for login
 app.use('/api/hotel', hotel);
 app.use('/api/hotel', Waiter);
 
