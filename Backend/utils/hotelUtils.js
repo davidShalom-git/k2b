@@ -10,24 +10,22 @@ const initializeTables = async () => {
   try {
     const existingTables = await Table.find({});
     if (existingTables.length === 0) {
-      // Create 40 tables (static, not per date)
-      const tablesToCreate = [];
-      for (let i = 1; i <= 40; i++) {
-        tablesToCreate.push({
-          tableId: i,
-          status: 'available',
-          orders: new Map(),
-          total: 0,
-          orderTime: null,
-          billTime: null,
-          payTime: null
-        });
-      }
+      const tablesToCreate = Array.from({ length: 40 }, (_, i) => ({
+        tableId: i + 1,
+        status: 'available',
+        orders: {}, // use plain object
+        total: 0,
+        orderTime: null,
+        billTime: null,
+        payTime: null
+      }));
       await Table.insertMany(tablesToCreate);
-      console.log(`Initialized ${tablesToCreate.length} static tables`);
+      console.log(`✅ Initialized ${tablesToCreate.length} static tables`);
+    } else {
+      console.log('ℹ️ Tables already exist, skipping initialization');
     }
   } catch (error) {
-    console.error('Error initializing tables:', error);
+    console.error('❌ Error initializing tables:', error);
     throw error;
   }
 };
