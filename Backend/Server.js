@@ -14,20 +14,21 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Connect to MongoDB first
-mongoose.connect(process.env.MONGODB_URL)
+mongoose.connect(process.env.MONGODB_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
 .then(async () => {
   console.log('✅ MongoDB Connected');
 
-  // Initialize only after DB is ready
-  await initializeMenuItems();
+  await initializeMenuItems(); // Safe to use models now
   await initializeTables();
 
-  // Register routes after DB is ready
   app.use('/api/hotel', hotelRoutes);
   app.use('/api/hotel', waiterRoutes);
 
   app.listen(3000, () => {
-    console.log('🚀 Server is running on port 3000');
+    console.log('🚀 Server running on port 3000');
   });
 })
 .catch((err) => {
