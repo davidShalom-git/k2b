@@ -1,42 +1,36 @@
-const express = require('express')
-const app = express()
-const mongoose = require('mongoose')
-const bodyParser = require('body-parser')
-const cors = require('cors')
-const hotel = require('./router/Hotel')
-const Waiter = require('./router/Waiter.js')
-const { initializeTables } = require('./utils/hotelUtils'); 
-require('dotenv').config()
-
-
-
+const express = require('express');
+const app = express();
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const hotel = require('./router/Hotel');
+const Waiter = require('./router/Waiter.js');
+const { initializeTables } = require('./utils/hotelUtils');
+require('dotenv').config();
 
 const corsOptions = {
-  origin: ['http://localhost:3000', 'https://k2b.vercel.app'], // Add your frontend URLs here
+  origin: ['http://localhost:3000', 'https://kb2.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 };
 
 app.use(cors(corsOptions));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-app.use(bodyParser.json())
-app.use(bodyParser.urlencoded({ extended: true }))
-
-app.use('/api/hotel',hotel)
-app.use('/api/hotel',Waiter)
+app.use('/api/hotel', hotel);
+app.use('/api/hotel', Waiter);
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URL)
   .then(async () => {
     console.log("MongoDB Connected");
-    await initializeTables(); // Initialize 40 tables here
-    app.listen(3000,()=> {
-      console.log("Server is running on port 3000")
-    });
+    await initializeTables();
   })
   .catch((error) => {
     console.error("MongoDB connection error:", error);
   });
 
-
+// Export the app for Vercel
+module.exports = app;
