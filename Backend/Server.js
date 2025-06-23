@@ -16,7 +16,7 @@ app.use('/api/hotel',hotel)
 app.use('/api/hotel',Waiter)
 
 // Connect to MongoDB
-mongoose.connect('mongodb://127.0.0.1:27017/hotel_management')
+mongoose.connect(process.env.MONGODB_URL)
   .then(async () => {
     console.log("MongoDB Connected");
     await initializeTables(); // Initialize 40 tables here
