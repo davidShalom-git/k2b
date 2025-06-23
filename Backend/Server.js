@@ -12,7 +12,7 @@ require('dotenv').config()
 
 
 const corsOptions = {
-  origin: ['http://localhost:6500', 'https://k2b.vercel.app'], // Add your frontend URLs here
+  origin: ['http://localhost:3000', 'https://k2b.vercel.app'], // Add your frontend URLs here
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
