@@ -9,7 +9,7 @@ const { initializeTables } = require('./utils/hotelUtils');
 require('dotenv').config();
 
 const corsOptions = {
-  origin: ['http://localhost:3000', 'http://localhost:6500', 'https://kb2.vercel.app'],
+  origin: ['http://localhost:3000', 'http://localhost:6500', 'https://chengam.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
