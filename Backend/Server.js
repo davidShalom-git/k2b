@@ -3,9 +3,9 @@ const app = express();
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const hotel = require('./router/Hotel');
+const hotel = require('./router/Hotel.js');
 const Waiter = require('./router/Waiter.js');
-const { initializeTables } = require('./utils/hotelUtils');
+const { initializeTables } = require('./utils/hotelUtils.js');
 require('dotenv').config();
 
 const corsOptions = {
