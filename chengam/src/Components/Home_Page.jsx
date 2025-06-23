@@ -12,7 +12,7 @@ const Home_Page = () => {
     const [isLoading, setIsLoading] = useState(false);
 
     const navigate = useNavigate();
-    const API = "http://localhost:3000/api/hotel";
+    const API = "https://k2b.vercel.app/api/hotel";
 
     const handleChange = (e) => {
         const { name, value } = e.target;

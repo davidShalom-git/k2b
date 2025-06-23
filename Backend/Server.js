@@ -8,7 +8,18 @@ const Waiter = require('./router/Waiter.js')
 const { initializeTables } = require('./utils/hotelUtils'); 
 require('dotenv').config()
 
-app.use(cors())
+
+
+
+const corsOptions = {
+  origin: ['http://localhost:6500', 'https://k2b.vercel.app'], // Add your frontend URLs here
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({ extended: true }))
 
