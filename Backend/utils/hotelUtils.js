@@ -81,7 +81,12 @@ const calculatePopularItems = (completedOrders, menuItems) => {
 // Initialize menu items
 const initializeMenuItems = async () => {
   try {
-    const existingCount = await MenuItem.countDocuments();
+   const existingCount = await MenuItem.countDocuments();
+if (existingCount > 0) {
+  console.log('Menu items already initialized');
+  return;
+}
+    
     
     if (existingCount === 0) {
       const defaultMenuItems = [
