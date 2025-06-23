@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors');
 const bodyParser = require('body-parser');
+const cors = require('cors');
 const hotelRoutes = require('./router/Hotel');
 const waiterRoutes = require('./router/Waiter');
 const { initializeTables, initializeMenuItems } = require('./utils/hotelUtils');
@@ -21,14 +21,17 @@ mongoose.connect(process.env.MONGODB_URL, {
 .then(async () => {
   console.log('✅ MongoDB Connected');
 
-  await initializeMenuItems(); // Safe to use models now
+  // Initialize data only after connection is ready
+  await initializeMenuItems();
   await initializeTables();
 
+  // Register routes after DB is ready
   app.use('/api/hotel', hotelRoutes);
   app.use('/api/hotel', waiterRoutes);
 
+  // Start server (only for local dev or non-Vercel platforms)
   app.listen(3000, () => {
-    console.log('🚀 Server running on port 3000');
+    console.log('🚀 Server is running on port 3000');
   });
 })
 .catch((err) => {
