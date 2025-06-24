@@ -530,6 +530,9 @@ router.post('/tables', authenticateManager, async (req, res) => {
 // ...existing code...
 
 // Update table
+// Remove manager authentication from table update route
+
+// Update table (no manager authentication required)
 router.put('/tables/:tableId', async (req, res) => {
   try {
     const { tableId } = req.params;
