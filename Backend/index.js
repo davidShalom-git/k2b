@@ -18,8 +18,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({ 
     message: 'K2B Hotel API is running!', 
-    timestamp: new Date().toISOString(),
-    endpoints: ['/api/waiter/login', '/api/waiter/register']
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -27,7 +26,7 @@ app.get('/', (req, res) => {
 app.use('/api/hotel', hotelRoutes);
 app.use('/api/waiter', waiterRoutes);
 
-// Connect to MongoDB
+// MongoDB connection
 mongoose.connect(process.env.MONGODB_URL, {
   useNewUrlParser: true,
   useUnifiedTopology: true
