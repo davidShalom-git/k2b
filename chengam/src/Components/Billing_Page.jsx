@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Minus, DollarSign, Users, Clock, CheckCircle, BarChart3, RefreshCw, Menu, X, LogOut, ArrowLeft, Snowflake, ChefHat, Utensils, CreditCard, Timer, TrendingUp } from 'lucide-react';
+import { Plus, Minus, DollarSign, Users, Clock, CheckCircle, BarChart3, RefreshCw, Menu, X, LogOut, ArrowLeft, Snowflake, ChefHat, Utensils, CreditCard, Timer, TrendingUp, Edit3, Save, Trash2, AlertCircle, Calendar, Package } from 'lucide-react';
 
 const RestaurantPOS = () => {
   const API_BASE_URL = 'https://chengam.vercel.app/api/hotel';
@@ -15,7 +15,17 @@ const RestaurantPOS = () => {
     error: '',
     isManager: false,
     managerPassword: '',
-    showMobileMenu: false
+    showMobileMenu: false,
+    // Menu management states
+    editingItem: null,
+    newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
+    showAddItem: false,
+    menuError: '',
+    // Daily pricing states
+    dailyPricing: {},
+    selectedDate: new Date().toISOString().split('T')[0],
+    editingDailyPrice: null,
+    showDailyPricing: false
   });
 
   const updateState = useCallback((updates) => setState(prev => ({ ...prev, ...updates })), []);
@@ -48,6 +58,12 @@ const RestaurantPOS = () => {
     );
   }, [state.tables]);
 
+  // Get current price for menu item (daily pricing or base price)
+  const getCurrentPrice = useCallback((menuItem) => {
+    const dailyPrice = state.dailyPricing[menuItem.id];
+    return dailyPrice?.price || menuItem.basePrice || menuItem.price;
+  }, [state.dailyPricing]);
+
   // Fetch data
   const fetchAllData = useCallback(async () => {
     if (state.loading) return;
@@ -64,13 +80,112 @@ const RestaurantPOS = () => {
     }
   }, [state.loading, apiCall, updateState]);
 
+  // Fetch daily pricing
+  const fetchDailyPricing = useCallback(async (date) => {
+    try {
+      const pricing = await apiCall(`/daily-pricing/${date}`);
+      const pricingMap = {};
+      pricing.forEach(p => {
+        pricingMap[p.menuItemId] = p;
+      });
+      updateState({ dailyPricing: pricingMap });
+    } catch (err) {
+      console.error('Failed to fetch daily pricing:', err);
+    }
+  }, [apiCall, updateState]);
+
+  // Menu management functions
+  const addMenuItem = useCallback(async () => {
+    if (!state.newItem.name.trim() || !state.newItem.basePrice || parseFloat(state.newItem.basePrice) <= 0) {
+      updateState({ menuError: 'Please provide valid item name and base price' });
+      return;
+    }
+
+    try {
+      updateState({ loading: true, menuError: '' });
+      const newItem = await apiCall('/menu', 'POST', {
+        name: state.newItem.name.trim(),
+        basePrice: parseFloat(state.newItem.basePrice),
+        category: state.newItem.category,
+        description: state.newItem.description,
+        preparationTime: parseInt(state.newItem.preparationTime) || 15
+      });
+      
+      updateState({ 
+        menuItems: [...state.menuItems, newItem],
+        newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
+        showAddItem: false,
+        loading: false
+      });
+    } catch (err) {
+      updateState({ menuError: 'Failed to add item: ' + err.message, loading: false });
+    }
+  }, [state.newItem, apiCall, updateState, state.menuItems]);
+
+  const updateMenuItem = useCallback(async (itemId, updates) => {
+    try {
+      updateState({ loading: true, menuError: '' });
+      const updatedItem = await apiCall(`/menu/${itemId}`, 'PUT', updates);
+      
+      updateState({
+        menuItems: state.menuItems.map(item => 
+          item.id === itemId ? updatedItem : item
+        ),
+        editingItem: null,
+        loading: false
+      });
+    } catch (err) {
+      updateState({ menuError: 'Failed to update item: ' + err.message, loading: false });
+    }
+  }, [apiCall, updateState, state.menuItems]);
+
+  const deleteMenuItem = useCallback(async (itemId) => {
+    if (!confirm('Are you sure you want to delete this menu item?')) return;
+
+    try {
+      updateState({ loading: true, menuError: '' });
+      await apiCall(`/menu/${itemId}`, 'DELETE');
+      
+      updateState({
+        menuItems: state.menuItems.filter(item => item.id !== itemId),
+        loading: false
+      });
+    } catch (err) {
+      updateState({ menuError: 'Failed to delete item: ' + err.message, loading: false });
+    }
+  }, [apiCall, updateState, state.menuItems]);
+
+  // Daily pricing functions
+  const setDailyPrice = useCallback(async (itemId, price, isAvailable = true) => {
+    try {
+      updateState({ loading: true, menuError: '' });
+      const dailyPrice = await apiCall(`/menu/${itemId}/daily-pricing`, 'POST', {
+        date: state.selectedDate,
+        price: parseFloat(price),
+        isAvailable
+      });
+      
+      updateState({
+        dailyPricing: {
+          ...state.dailyPricing,
+          [itemId]: dailyPrice
+        },
+        editingDailyPrice: null,
+        loading: false
+      });
+    } catch (err) {
+      updateState({ menuError: 'Failed to set daily price: ' + err.message, loading: false });
+    }
+  }, [apiCall, updateState, state.selectedDate, state.dailyPricing]);
+
   // Calculate total
   const calculateTotal = useCallback((orders) => {
     return Object.entries(orders).reduce((sum, [id, qty]) => {
       const item = state.menuItems.find(item => item.id === parseInt(id));
-      return sum + (item ? item.price * qty : 0);
+      const price = item ? getCurrentPrice(item) : 0;
+      return sum + (price * qty);
     }, 0);
-  }, [state.menuItems]);
+  }, [state.menuItems, getCurrentPrice]);
 
   // Update table
   const updateTable = useCallback(async (tableId, updates) => {
@@ -142,7 +257,14 @@ const RestaurantPOS = () => {
 
   useEffect(() => {
     fetchAllData();
+    fetchDailyPricing(state.selectedDate);
   }, []);
+
+  useEffect(() => {
+    if (state.selectedDate) {
+      fetchDailyPricing(state.selectedDate);
+    }
+  }, [state.selectedDate, fetchDailyPricing]);
 
   // Table colors with modern design
   const getTableStatus = (status) => {
@@ -404,10 +526,11 @@ const RestaurantPOS = () => {
             <div className="space-y-2 mb-4">
               {Object.entries(state.tables[state.selectedTable].orders).map(([itemId, qty]) => {
                 const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                const price = item ? getCurrentPrice(item) : 0;
                 return item ? (
                   <div key={itemId} className="flex justify-between items-center py-2 px-3 bg-white/50 rounded-lg">
                     <span className="font-medium">{item.name} × {qty}</span>
-                    <span className="font-bold text-blue-700">₹{item.price * qty}</span>
+                    <span className="font-bold text-blue-700">₹{price * qty}</span>
                   </div>
                 ) : null;
               })}
@@ -423,34 +546,55 @@ const RestaurantPOS = () => {
 
         {/* Menu Items */}
         <div className="grid gap-4 mb-8">
-          {state.menuItems.map(item => (
-            <div key={item.id} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p6 hover:shadow-xl transition-all duration-300 p-5">
-              <div className="flex justify-between items-center">
-                <div className="flex-1">
-                  <h4 className="font-bold text-lg text-gray-800">{item.name}</h4>
-                  <p className="text-2xl font-bold text-green-600">₹{item.price}</p>
-                </div>
-                <div className="flex gap-3">
-                  <Button
-                    variant="success"
-                    onClick={() => handleTableAction(state.selectedTable, 'addItem', item.id)}
-                    disabled={['billed', 'paid'].includes(state.tables[state.selectedTable]?.status)}
-                    className="p-3 rounded-xl"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => handleTableAction(state.selectedTable, 'removeItem', item.id)}
-                    disabled={!state.tables[state.selectedTable]?.orders[item.id]}
-                    className="p-3 rounded-xl"
-                  >
-                    <Minus className="w-5 h-5" />
-                  </Button>
+          {state.menuItems.map(item => {
+            const currentPrice = getCurrentPrice(item);
+            const dailyPrice = state.dailyPricing[item.id];
+            const isSpecialPrice = dailyPrice && dailyPrice.price !== item.basePrice;
+            
+            return (
+              <div key={item.id} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 hover:shadow-xl transition-all duration-300">
+                <div className="flex justify-between items-center">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h4 className="font-bold text-lg text-gray-800">{item.name}</h4>
+                      {isSpecialPrice && (
+                        <span className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-2 py-1 rounded-lg text-xs font-medium">
+                          Special Price
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-2xl font-bold text-green-600">₹{currentPrice}</p>
+                      {isSpecialPrice && (
+                        <p className="text-lg text-gray-500 line-through">₹{item.basePrice}</p>
+                      )}
+                    </div>
+                    {item.category && (
+                      <p className="text-sm text-gray-500 capitalize">{item.category}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-3">
+                    <Button
+                      variant="success"
+                      onClick={() => handleTableAction(state.selectedTable, 'addItem', item.id)}
+                      disabled={['billed', 'paid'].includes(state.tables[state.selectedTable]?.status)}
+                      className="p-3 rounded-xl"
+                    >
+                      <Plus className="w-5 h-5" />
+                    </Button>
+                    <Button
+                      variant="danger"
+                      onClick={() => handleTableAction(state.selectedTable, 'removeItem', item.id)}
+                      disabled={!state.tables[state.selectedTable]?.orders[item.id]}
+                      className="p-3 rounded-xl"
+                    >
+                      <Minus className="w-5 h-5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Action Buttons */}
@@ -528,15 +672,15 @@ const RestaurantPOS = () => {
                     </div>
                   )}
                 </div>
-                
-                <div className="bg-white/50 rounded-xl p-4 mb-4">
+                                <div className="bg-white/50 rounded-xl p-4 mb-4">
                   <div className="grid gap-2">
                     {Object.entries(table.orders).map(([itemId, quantity]) => {
                       const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                      const price = item ? getCurrentPrice(item) : 0;
                       return item ? (
                         <div key={itemId} className="flex justify-between items-center">
                           <span className="font-medium">{item.name} ×{quantity}</span>
-                          <span className="font-bold">₹{item.price * quantity}</span>
+                          <span className="font-bold">₹{price * quantity}</span>
                         </div>
                       ) : null;
                     })}
@@ -651,11 +795,327 @@ const RestaurantPOS = () => {
               ).length === 0 && (
                 <div className="text-center py-8 text-gray-500">
                   <Icon className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                  <p>No tables in  this status</p>
+                  <p>No tables in this status</p>
                 </div>
               )}
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const MenuManagementView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+            <Package className="w-7 h-7" />
+            Menu Management
+          </h2>
+          <p className="text-gray-600 mt-1">Manage menu items and pricing</p>
+        </div>
+
+        {/* Add New Item Form */}
+        {state.showAddItem && (
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Add New Menu Item</h3>
+            {state.menuError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-4">
+                {state.menuError}
+              </div>
+            )}
+            <div className="grid gap-4">
+              <input
+                type="text"
+                placeholder="Item Name"
+                value={state.newItem.name}
+                onChange={(e) => updateState({ newItem: { ...state.newItem, name: e.target.value } })}
+                className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <input
+                type="number"
+                placeholder="Base Price"
+                value={state.newItem.basePrice}
+                onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
+                className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <select
+                value={state.newItem.category}
+                onChange={(e) => updateState({ newItem: { ...state.newItem, category: e.target.value } })}
+                className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="main">Main Course</option>
+                <option value="starter">Starter</option>
+                <option value="dessert">Dessert</option>
+                <option value="beverage">Beverage</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Description"
+                value={state.newItem.description}
+                onChange={(e) => updateState({ newItem: { ...state.newItem, description: e.target.value } })}
+                className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <input
+                type="number"
+                placeholder="Preparation Time (minutes)"
+                value={state.newItem.preparationTime}
+                onChange={(e) => updateState({ newItem: { ...state.newItem, preparationTime: e.target.value } })}
+                className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <div className="flex gap-4">
+                <Button
+                  onClick={addMenuItem}
+                  disabled={state.loading}
+                  className="flex-1"
+                  size="lg"
+                >
+                  <Save className="w-5 h-5 mr-2" />
+                  Add Item
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => updateState({ 
+                    showAddItem: false, 
+                    newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
+                    menuError: ''
+                  })}
+                  className="flex-1"
+                  size="lg"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Menu Items List */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-bold text-gray-800">Menu Items</h3>
+            <Button
+              onClick={() => updateState({ showAddItem: true })}
+              variant="primary"
+              size="sm"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add New Item
+            </Button>
+          </div>
+          
+          <div className="grid gap-4">
+            {state.menuItems.map(item => (
+              <div key={item.id} className="p-4 bg-gray-50 rounded-xl">
+                {state.editingItem === item.id ? (
+                  <div className="grid gap-4">
+                    <input
+                      type="text"
+                      value={state.newItem.name}
+                      onChange={(e) => updateState({ newItem: { ...state.newItem, name: e.target.value } })}
+                      className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <input
+                      type="number"
+                      value={state.newItem.basePrice}
+                      onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
+                      className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <select
+                      value={state.newItem.category}
+                      onChange={(e) => updateState({ newItem: { ...state.newItem, category: e.target.value } })}
+                      className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="main">Main Course</option>
+                      <option value="starter">Starter</option>
+                      <option value="dessert">Dessert</option>
+                      <option value="beverage">Beverage</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={state.newItem.description}
+                      onChange={(e) => updateState({ newItem: { ...state.newItem, description: e.target.value } })}
+                      className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <input
+                      type="number"
+                      value={state.newItem.preparationTime}
+                      onChange={(e) => updateState({ newItem: { ...state.newItem, preparationTime: e.target.value } })}
+                      className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <div className="flex gap-4">
+                      <Button
+                        onClick={() => updateMenuItem(item.id, state.newItem)}
+                        disabled={state.loading}
+                        className="flex-1"
+                        size="sm"
+                      >
+                        <Save className="w-4 h-4 mr-2" />
+                        Save
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => updateState({ editingItem: null, newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 } })}
+                        className="flex-1"
+                        size="sm"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h4 className="font-bold text-lg text-gray-800">{item.name}</h4>
+                      <p className="text-2xl font-bold text-green-600">₹{getCurrentPrice(item)}</p>
+                      <p className="text-sm text-gray-500 capitalize">{item.category}</p>
+                      {item.description && <p className="text-sm text-gray-600">{item.description}</p>}
+                      <p className="text-sm text-gray-500">Prep Time: {item.preparationTime} min</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => updateState({ 
+                          editingItem: item.id,
+                          newItem: { 
+                            name: item.name, 
+                            basePrice: item.basePrice, 
+                            category: item.category, 
+                            description: item.description || '', 
+                            preparationTime: item.preparationTime 
+                          }
+                        })}
+                        size="sm"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() => deleteMenuItem(item.id)}
+                        size="sm"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const DailyPricingView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+            <Calendar className="w-7 h-7" />
+            Daily Pricing
+          </h2>
+          <p className="text-gray-600 mt-1">Manage daily pricing for menu items</p>
+        </div>
+
+        <div className="mb-6">
+          <input
+            type="date"
+            value={state.selectedDate}
+            onChange={(e) => updateState({ selectedDate: e.target.value })}
+            className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+
+        {state.menuError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-6">
+            {state.menuError}
+          </div>
+        )}
+
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+          <h3 className="text-xl font-bold text-gray-800 mb-4">Menu Items Pricing</h3>
+          <div className="grid gap-4">
+            {state.menuItems.map(item => (
+              <div key={item.id} className="p-4 bg-gray-50 rounded-xl">
+                {state.editingDailyPrice === item.id ? (
+                  <div className="grid gap-4">
+                    <div className="flex items-center gap-4">
+                      <input
+                        type="number"
+                        placeholder="Daily Price"
+                        value={state.newItem.basePrice}
+                        onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
+                        className="p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent flex-1"
+                      />
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={state.newItem.isAvailable !== false}
+                          onChange={(e) => updateState({ newItem: { ...state.newItem, isAvailable: e.target.checked } })}
+                          className="w-5 h-5"
+                        />
+                        Available
+                      </label>
+                    </div>
+                    <div className="flex gap-4">
+                      <Button
+                        onClick={() => 
+                          setDailyPrice(
+                            item.id, 
+                            state.newItem.basePrice, 
+                            state.newItem.isAvailable !== false
+                          )
+                        }
+                        disabled={state.loading}
+                        className="flex-1"
+                        size="sm"
+                      >
+                        <Save className="w-4 h-4 mr-2" />
+                        Save
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => updateState({ editingDailyPrice: null, newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 } })}
+                        className="flex-1"
+                        size="sm"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h4 className="font-bold text-lg text-gray-800">{item.name}</h4>
+                      <p className="text-2xl font-bold text-green-600">₹{getCurrentPrice(item)}</p>
+                      {state.dailyPricing[item.id] && (
+                        <p className="text-sm text-gray-500">
+                          {state.dailyPricing[item.id].isAvailable 
+                            ? `Daily price set for ${state.selectedDate}`
+                            : `Not available on ${state.selectedDate}`}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={() => updateState({ 
+                        editingDailyPrice: item.id,
+                        newItem: { 
+                          basePrice: state.dailyPricing[item.id]?.price || item.basePrice,
+                          isAvailable: state.dailyPricing[item.id]?.isAvailable !== false
+                        }
+                      })}
+                      size="sm"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -683,160 +1143,188 @@ const RestaurantPOS = () => {
           </Button>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {/* Navigation Tabs */}
+        <div className="flex gap-4 mb-8">
           {[
-            { 
-              label: 'Total Revenue', 
-              value: `₹${state.dailyStats.totalRevenue.toLocaleString()}`,
-              icon: DollarSign,
-              color: 'from-emerald-500 to-green-600'
-            },
-            { 
-              label: 'Total Orders', 
-              value: state.dailyStats.totalOrders.toLocaleString(),
-              icon: Utensils,
-              color: 'from-blue-500 to-indigo-600'
-            },
-            { 
-              label: 'Avg. Order Value', 
-              value: `₹${state.dailyStats.avgOrderValue.toLocaleString()}`,
-              icon: TrendingUp,
-              color: 'from-purple-500 to-pink-600'
-            },
-            { 
-              label: 'Active Tables', 
-              value: Object.values(state.tables).filter(t => t.status !== 'available').length,
-              icon: Users,
-              color: 'from-amber-500 to-orange-600'
-            }
-          ].map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="text-gray-600 font-medium">{label}</p>
-                  <p className="text-2xl font-bold text-gray-800 mt-1">{value}</p>
-                </div>
-                <div className={`p-3 bg-gradient-to-r ${color} rounded-xl`}>
-                  <Icon className="w-6 h-6 text-white" />
-                </div>
-              </div>
-            </div>
+            { key: 'overview', label: 'Overview', icon: BarChart3 },
+            { key: 'menu-management', label: 'Menu Management', icon: Package },
+            { key: 'daily-pricing', label: 'Daily Pricing', icon: Calendar },
+            { key: 'history', label: 'History', icon: Clock }
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => updateState({ activeView: tab.key })}
+              className={`px-6 py-3 text-sm rounded-xl font-medium transition-all duration-200 flex items-center gap-2 ${
+                state.activeView === tab.key 
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
           ))}
         </div>
 
-        {/* Additional Insights */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
-            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5" />
-              Popular Items
-            </h3>
-            <div className="space-y-3">
-              {Object.entries(state.dailyStats.popularItems || {})
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 5)
-                .map(([itemId, count]) => {
-                  const item = state.menuItems.find(i => i.id === parseInt(itemId));
-                  return item ? (
-                    <div key={itemId} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl hover:bg-gray-100">
-                      <div>
-                        <p className="font-medium text-gray-800">{item.name}</p>
-                        <p className="text-sm text-gray-600">₹{item.price}</p>
-                      </div>
-                      <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-3 py-1 rounded-lg font-medium">
-                        {count} sold
-                      </div>
+        {/* Stats Cards */}
+        {state.activeView === 'overview' && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              {[
+                { 
+                  label: 'Total Revenue', 
+                  value: `₹${state.dailyStats.totalRevenue.toLocaleString()}`,
+                  icon: DollarSign,
+                  color: 'from-emerald-500 to-green-600'
+                },
+                { 
+                  label: 'Total Orders', 
+                  value: state.dailyStats.totalOrders.toLocaleString(),
+                  icon: Utensils,
+                  color: 'from-blue-500 to-indigo-600'
+                },
+                { 
+                  label: 'Avg. Order Value', 
+                  value: `₹${state.dailyStats.avgOrderValue.toLocaleString()}`,
+                  icon: TrendingUp,
+                  color: 'from-purple-500 to-pink-600'
+                },
+                { 
+                  label: 'Active Tables', 
+                  value: Object.values(state.tables).filter(t => t.status !== 'available').length,
+                  icon: Users,
+                  color: 'from-amber-500 to-orange-600'
+                }
+              ].map(({ label, value, icon: Icon, color }) => (
+                <div key={label} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-gray-600 font-medium">{label}</p>
+                      <p className="text-2xl font-bold text-gray-800 mt-1">{value}</p>
                     </div>
-                  ) : null;
-                })}
-              {Object.keys(state.dailyStats.popularItems || {}).length === 0 && (
-                <p className="text-gray-500 text-center py-6">No items sold today</p>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
-            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              Table Status Overview
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              {Object.entries({
-                available: 'Available',
-                occupied: 'Occupied',
-                billed: 'Billed',
-                paid: 'Paid'
-              }).map(([status, label]) => {
-                const count = Object.values(state.tables).filter(t => t.status === status).length;
-                const statusConfig = getTableStatus(status);
-                const StatusIcon = statusConfig.icon;
-                return (
-                  <div key={status} className={`p-4 rounded-xl ${statusConfig.bg} ${statusConfig.border} ${statusConfig.text}`}>
-                    <div className="flex items-center gap-3">
-                      <StatusIcon className="w-5 h-5" />
-                      <div>
-                        <p className="text-lg font-bold">{count}</p>
-                        <p className="text-sm">{label}</p>
-                      </div>
+                    <div className={`p-3 bg-gradient-to-r ${color} rounded-xl`}>
+                      <Icon className="w-6 h-6 text-white" />
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
-  const HistoryView = () => (
-    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
-      <div className="max-w-6xl mx-auto">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
-          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
-            <Clock className="w-7 h-7" />
-            Order History
-          </h2>
-          <p className="text-gray-600 mt-1">Recent completed orders</p>
-        </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5" />
+                  Popular Items
+                </h3>
+                <div className="space-y-3">
+                  {Object.entries(state.dailyStats.popularItems || {})
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 5)
+                    .map(([itemId, count]) => {
+                      const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                      return item ? (
+                        <div key={itemId} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl hover:bg-gray-100">
+                          <div>
+                            <p className="font-medium text-gray-800">{item.name}</p>
+                            <p className="text-sm text-gray-600">₹{getCurrentPrice(item)}</p>
+                          </div>
+                          <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-3 py-1 rounded-lg font-medium">
+                            {count} sold
+                          </div>
+                        </div>
+                      ) : null;
+                    })}
+                  {Object.keys(state.dailyStats.popularItems || {}).length === 0 && (
+                    <p className="text-gray-500 text-center py-6">No items sold today</p>
+                  )}
+                </div>
+              </div>
 
-        {state.dailyStats.completedOrders?.length > 0 ? (
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-gray-100/50">
-                  <tr>
-                    {['Table', 'Items', 'Total', 'Order Time', 'Completed'].map(header => (
-                      <th key={header} className="px-6 py-4 font-bold text-gray-800">{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200/50">
-                  {state.dailyStats.completedOrders.slice(-20).reverse().map((order, index) => (
-                    <tr key={index} className="hover:bg-gray-50/50 transition-colors duration-200">
-                      <td className="px-6 py-4 font-bold text-gray-800">Table {order.tableId}</td>
-                      <td className="px-6 py-4">
-                        {Object.entries(order.orders).map(([itemId, qty]) => {
-                          const item = state.menuItems.find(i => i.id === parseInt(itemId));
-                          return item ? (
-                            <div key={itemId} className="text-sm text-gray-600">{item.name} × {qty}</div>
-                          ) : null;
-                        })}
-                      </td>
-                      <td className="px-6 py-4 font-bold text-green-600">₹{order.total}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{order.orderTime}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{order.payTime}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  <Users className="w-5 h-5" />
+                  Table Status Overview
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {Object.entries({
+                    available: 'Available',
+                    occupied: 'Occupied',
+                    billed: 'Billed',
+                    paid: 'Paid'
+                  }).map(([status, label]) => {
+                    const count = Object.values(state.tables).filter(t => t.status === status).length;
+                    const statusConfig = getTableStatus(status);
+                    const StatusIcon = statusConfig.icon;
+                    return (
+                      <div key={status} className={`p-4 rounded-xl ${statusConfig.bg} ${statusConfig.border} ${statusConfig.text}`}>
+                        <div className="flex items-center gap-3">
+                          <StatusIcon className="w-5 h-5" />
+                          <div>
+                            <p className="text-lg font-bold">{count}</p>
+                            <p className="text-sm">{label}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 text-center">
-            <Clock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 font-medium">No completed orders today</p>
+          </>
+        )}
+
+        {state.activeView === 'menu-management' && <MenuManagementView />}
+        {state.activeView === 'daily-pricing' && <DailyPricingView />}
+        {state.activeView === 'history' && (
+          <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+            <div className="max-w-6xl mx-auto">
+              <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                  <Clock className="w-7 h-7" />
+                  Order History
+                </h2>
+                <p className="text-gray-600 mt-1">Recent completed orders</p>
+              </div>
+
+              {state.dailyStats.completedOrders?.length > 0 ? (
+                <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-gray-100/50">
+                        <tr>
+                          {['Table', 'Items', 'Total', 'Order Time', 'Completed'].map(header => (
+                            <th key={header} className="px-6 py-4 font-bold text-gray-800">{header}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200/50">
+                        {state.dailyStats.completedOrders.slice(-20).reverse().map((order, index) => (
+                          <tr key={index} className="hover:bg-gray-50/50 transition-colors duration-200">
+                            <td className="px-6 py-4 font-bold text-gray-800">Table {order.tableId}</td>
+                            <td className="px-6 py-4">
+                              {Object.entries(order.orders).map(([itemId, qty]) => {
+                                const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                                return item ? (
+                                  <div key={itemId} className="text-sm text-gray-600">{item.name} × {qty}</div>
+                                ) : null;
+                              })}
+                            </td>
+                            <td className="px-6 py-4 font-bold text-green-600">₹{order.total}</td>
+                            <td className="px-6 py-4 text-sm text-gray-600">{order.orderTime}</td>
+                            <td className="px-6 py-4 text-sm text-gray-600">{order.payTime}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 text-center">
+                  <Clock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-600 font-medium">No completed orders today</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -848,7 +1336,7 @@ const RestaurantPOS = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-pink-50 flex items-center justify-center p-6">
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-2xl p-8 max-w-md text-center border border-red-200/50">
-          <X className="w-12 h-12 text-red-600 mx-auto mb-4" />
+          <AlertCircle className="w-12 h-12 text-red-600 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-gray-800 mb-4">Something went wrong</h2>
           <p className="text-gray-600 mb-6">{state.error}</p>
           <Button 
@@ -875,7 +1363,7 @@ const RestaurantPOS = () => {
         {state.activeView === 'orders' && <OrdersView />}
         {state.activeView === 'billing' && <BillingView />}
         {state.activeView === 'manager' && state.isManager && <ManagerView />}
-        {state.activeView === 'history' && state.isManager && <HistoryView />}
+        {(state.activeView === 'menu-management' || state.activeView === 'daily-pricing' || state.activeView === 'history') && state.isManager && <ManagerView />}
       </main>
     </div>
   );
