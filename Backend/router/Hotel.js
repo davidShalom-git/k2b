@@ -13,7 +13,8 @@ const {
   getAvailableTables,
   getOccupiedTables,
   formatCurrency,
-  isValidStatusTransition
+  isValidStatusTransition,
+  initializeTables
 } = require('../utils/hotelUtils');
 const cron = require('node-cron');
 
@@ -39,9 +40,92 @@ const authenticateManager = (req, res, next) => {
   next();
 };
 
+// Initialize menu items function
+const initializeMenuItems = async () => {
+  try {
+    console.log('Initializing menu items...');
+    
+    // Check if menu items already exist
+    const existingItems = await MenuItem.countDocuments({});
+    if (existingItems > 0) {
+      console.log(`Found ${existingItems} existing menu items`);
+      return;
+    }
+
+    // Default menu items to create if none exist
+    const defaultMenuItems = [
+      {
+        id: 1,
+        name: 'Chicken Biryani',
+        basePrice: 180,
+        category: 'main',
+        description: 'Aromatic basmati rice with tender chicken',
+        preparationTime: 25,
+        ingredients: ['Chicken', 'Basmati Rice', 'Spices', 'Yogurt'],
+        tags: ['spicy', 'popular'],
+        isActive: true
+      },
+      {
+        id: 2,
+        name: 'Butter Chicken',
+        basePrice: 220,
+        category: 'main',
+        description: 'Creamy tomato-based chicken curry',
+        preparationTime: 20,
+        ingredients: ['Chicken', 'Tomato', 'Cream', 'Butter'],
+        tags: ['creamy', 'mild'],
+        isActive: true
+      },
+      {
+        id: 3,
+        name: 'Paneer Tikka',
+        basePrice: 160,
+        category: 'appetizer',
+        description: 'Grilled cottage cheese with spices',
+        preparationTime: 15,
+        ingredients: ['Paneer', 'Spices', 'Yogurt'],
+        tags: ['vegetarian', 'grilled'],
+        isActive: true
+      },
+      {
+        id: 4,
+        name: 'Dal Tadka',
+        basePrice: 120,
+        category: 'main',
+        description: 'Yellow lentils with tempering',
+        preparationTime: 15,
+        ingredients: ['Lentils', 'Spices', 'Ghee'],
+        tags: ['vegetarian', 'healthy'],
+        isActive: true
+      },
+      {
+        id: 5,
+        name: 'Masala Chai',
+        basePrice: 25,
+        category: 'beverage',
+        description: 'Traditional Indian spiced tea',
+        preparationTime: 5,
+        ingredients: ['Tea', 'Milk', 'Spices'],
+        tags: ['hot', 'traditional'],
+        isActive: true
+      }
+    ];
+
+    // Create default menu items
+    for (const item of defaultMenuItems) {
+      const menuItem = new MenuItem(item);
+      await menuItem.save();
+    }
+
+    console.log('Default menu items created successfully');
+  } catch (error) {
+    console.error('Error initializing menu items:', error);
+  }
+};
+
 // ======================== MENU MANAGEMENT ROUTES ========================
 
-// Get active menu with daily pricing
+// Get active menu with daily pricing (NO AUTHENTICATION REQUIRED)
 router.get('/menu', async (req, res) => {
   try {
     const date = req.query.date || getCurrentDate();
@@ -49,6 +133,51 @@ router.get('/menu', async (req, res) => {
     res.json(menuWithPricing);
   } catch (error) {
     console.error('Error fetching menu:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get specific menu item by ID (NO AUTHENTICATION REQUIRED)
+router.get('/menu/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ error: 'Invalid menu item ID' });
+    }
+
+    const menuItem = await MenuItem.findOne({ id: parseInt(id), isActive: true });
+    
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    // Get daily pricing if available
+    const date = req.query.date || getCurrentDate();
+    const dailyPricing = await DailyMenuPricing.findOne({ 
+      date, 
+      menuItemId: parseInt(id) 
+    });
+
+    const response = {
+      id: menuItem.id,
+      name: menuItem.name,
+      basePrice: menuItem.basePrice,
+      currentPrice: dailyPricing ? dailyPricing.price : menuItem.basePrice,
+      category: menuItem.category,
+      description: menuItem.description,
+      image: menuItem.image,
+      preparationTime: menuItem.preparationTime,
+      ingredients: menuItem.ingredients,
+      tags: menuItem.tags,
+      isAvailable: dailyPricing ? dailyPricing.isAvailable : true,
+      specialOffer: dailyPricing ? dailyPricing.specialOffer : '',
+      discount: dailyPricing ? dailyPricing.discount : 0
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching menu item:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -313,7 +442,7 @@ router.get('/daily-pricing/:date', async (req, res) => {
 
 // ======================== TABLE MANAGEMENT ROUTES ========================
 
-// Get all tables
+// Get all tables (NO AUTHENTICATION REQUIRED for public viewing)
 router.get('/tables', async (req, res) => {
   try {
     const tables = await Table.find({}).sort({ tableId: 1 });
@@ -519,69 +648,6 @@ router.delete('/tables/:tableId', authenticateManager, async (req, res) => {
   }
 });
 
-// Bulk add tables
-router.post('/tables/bulk', 
-  authenticateManager,
-  validateRequest(['count']),
-  async (req, res) => {
-    try {
-      const { count, startId, capacity, location } = req.body;
-      
-      if (isNaN(parseInt(count)) || parseInt(count) <= 0) {
-        return res.status(400).json({ error: 'Count must be a positive number' });
-      }
-
-      const createdTables = [];
-      const errors = [];
-      let currentId = startId || await getNextTableId();
-
-      for (let i = 0; i < count; i++) {
-        try {
-          // Check if table already exists
-          const existingTable = await Table.findOne({ tableId: currentId });
-          if (!existingTable) {
-            const newTable = new Table({
-              tableId: currentId,
-              status: 'available',
-              capacity: capacity || 4,
-              location: location || '',
-              orders: new Map(),
-              total: 0,
-              orderTime: null,
-              billTime: null,
-              payTime: null
-            });
-
-            await newTable.save();
-            createdTables.push({
-              id: newTable.tableId,
-              status: newTable.status,
-              capacity: newTable.capacity,
-              location: newTable.location,
-              orders: {},
-              total: newTable.total
-            });
-          } else {
-            errors.push(`Table ${currentId} already exists`);
-          }
-        } catch (error) {
-          errors.push(`Table ${currentId}: ${error.message}`);
-        }
-        currentId++;
-      }
-
-      res.status(201).json({ 
-        message: `${createdTables.length} tables created successfully`,
-        tables: createdTables,
-        errors: errors.length > 0 ? errors : undefined
-      });
-    } catch (error) {
-      console.error('Error bulk creating tables:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-);
-
 // ======================== ORDER MANAGEMENT ROUTES ========================
 
 // Complete order (when table is cleared/paid)
@@ -674,88 +740,9 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// Get stats for specific date
-router.get('/stats/:date', async (req, res) => {
-  try {
-    const { date } = req.params;
-    
-    // Validate date format
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
-    }
-    
-    const stats = await DailyStats.findOne({ date });
-    
-    if (stats) {
-      res.json({
-        totalRevenue: stats.totalRevenue,
-        totalOrders: stats.totalOrders,
-        avgOrderValue: stats.avgOrderValue,
-        popularItems: Object.fromEntries(stats.popularItems),
-        completedOrders: stats.completedOrders,
-        date: stats.date,
-        isFinalized: stats.isFinalized,
-        finalizedAt: stats.finalizedAt,
-        lastUpdated: stats.updatedAt
-      });
-    } else {
-      res.json({
-        totalRevenue: 0,
-        totalOrders: 0,
-        avgOrderValue: 0,
-        popularItems: {},
-        completedOrders: [],
-        date,
-        isFinalized: false,
-        lastUpdated: new Date()
-      });
-    }
-  } catch (error) {
-    console.error('Error fetching daily stats:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get historical stats (last N days)
-router.get('/stats/history/days/:days', async (req, res) => {
-  try {
-    const days = parseInt(req.params.days) || 7;
-    
-    if (days <= 0 || days > 365) {
-      return res.status(400).json({ error: 'Days must be between 1 and 365' });
-    }
-
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    
-    const dateStrings = [];
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      dateStrings.push(d.toISOString().split('T')[0]);
-    }
-    
-    const stats = await DailyStats.find({
-      date: { $in: dateStrings }
-    }).sort({ date: 1 });
-    
-    res.json(stats.map(stat => ({
-      date: stat.date,
-      totalRevenue: stat.totalRevenue,
-      totalOrders: stat.totalOrders,
-      avgOrderValue: stat.avgOrderValue,
-      popularItems: Object.fromEntries(stat.popularItems),
-      isFinalized: stat.isFinalized,
-      finalizedAt: stat.finalizedAt
-    })));
-  } catch (error) {
-    console.error('Error fetching historical stats:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // ======================== AUTHENTICATION ROUTES ========================
 
-// Manager authentication (should be improved for production)
+// Manager authentication
 router.post('/auth/manager', validateRequest(['password']), async (req, res) => {
   try {
     const { password } = req.body;
@@ -765,7 +752,7 @@ router.post('/auth/manager', validateRequest(['password']), async (req, res) => 
       res.json({ 
         success: true, 
         token: 'manager_authenticated',
-        expiresIn: '24h' // Should implement proper JWT tokens
+        expiresIn: '24h'
       });
     } else {
       res.status(401).json({ success: false, message: 'Invalid password' });
@@ -787,111 +774,15 @@ router.get('/health', (req, res) => {
   });
 });
 
-// Get system info
-router.get('/system/info', authenticateManager, async (req, res) => {
-  try {
-    const menuCount = await MenuItem.countDocuments({});
-    const activeMenuCount = await MenuItem.countDocuments({ isActive: true });
-    const tableCount = await Table.countDocuments({});
-    const availableTableCount = await Table.countDocuments({ status: 'available' });
-    const occupiedTableCount = await Table.countDocuments({ status: { $in: ['occupied', 'billed'] } });
-
-    res.json({
-      menu: {
-        total: menuCount,
-        active: activeMenuCount,
-        inactive: menuCount - activeMenuCount
-      },
-      tables: {
-        total: tableCount,
-        available: availableTableCount,
-        occupied: occupiedTableCount
-      },
-      date: getCurrentDate(),
-      time: getCurrentTime()
-    });
-  } catch (error) {
-    console.error('Error fetching system info:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // ======================== AUTOMATED TASKS ========================
-
-// Helper function to get previous date
-const getPreviousDate = (date) => {
-  const prevDate = new Date(date);
-  prevDate.setDate(prevDate.getDate() - 1);
-  return prevDate.toISOString().split('T')[0];
-};
-
-// Finalize previous day stats
-const finalizePreviousDayStats = async (previousDate) => {
-  try {
-    console.log(`Finalizing stats for ${previousDate}`);
-    
-    const stats = await DailyStats.findOne({ date: previousDate });
-    
-    if (stats && stats.completedOrders.length > 0 && !stats.isFinalized) {
-      // Recalculate final stats
-      const popularItems = await calculatePopularItems(stats.completedOrders, previousDate);
-      
-      await DailyStats.findOneAndUpdate(
-        { date: previousDate },
-        {
-          popularItems,
-          isFinalized: true,
-          finalizedAt: new Date(),
-          updatedAt: new Date()
-        }
-      );
-      
-      console.log(`Finalized stats for ${previousDate}: Revenue: ₹${stats.totalRevenue}, Orders: ${stats.totalOrders}`);
-    }
-  } catch (error) {
-    console.error(`Error finalizing stats for ${previousDate}:`, error);
-  }
-};
-
-// Perform daily reset
-const performDailyReset = async () => {
-  try {
-    const currentDate = getCurrentDate();
-    const previousDate = getPreviousDate(currentDate);
-    
-    console.log(`Performing daily reset for ${currentDate}`);
-    
-    // Finalize previous day and initialize current day
-    await finalizePreviousDayStats(previousDate);
-    await initializeDailyStats(currentDate);
-    
-    console.log('Daily reset completed successfully');
-  } catch (error) {
-    console.error('Error during daily reset:', error);
-  }
-};
-
-// Schedule daily reset at midnight
-cron.schedule('0 0 * * *', performDailyReset, {
-  timezone: "Asia/Kolkata" // Adjust timezone as needed
-});
-
-// Manual trigger for daily reset (for testing)
-router.post('/system/daily-reset', authenticateManager, async (req, res) => {
-  try {
-    await performDailyReset();
-    res.json({ success: true, message: 'Daily reset completed successfully' });
-  } catch (error) {
-    console.error('Error in manual daily reset:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // Initialize server
 const initializeServer = async () => {
   try {
     const currentDate = getCurrentDate();
     await initializeDailyStats(currentDate);
+    await initializeMenuItems(); // Initialize menu items
+    await initializeTables();    // <-- Initialize tables
     console.log('Server initialized successfully');
   } catch (error) {
     console.error('Error initializing server:', error);
@@ -901,4 +792,6 @@ const initializeServer = async () => {
 // Initialize when module is loaded
 initializeServer();
 
+
 module.exports = router;
+module.exports.initializeMenuItems = initializeMenuItems;

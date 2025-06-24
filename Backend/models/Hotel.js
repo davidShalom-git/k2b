@@ -6,10 +6,10 @@ const menuItemSchema = new mongoose.Schema({
   name: { type: String, required: true },
   basePrice: { type: Number, required: true }, // Default/base price
   category: { 
-    type: String, 
-    enum: ['main', 'rice', 'bread', 'drinks', 'dessert', 'appetizer', 'side'], 
-    default: 'main' 
-  },
+  type: String, 
+  enum: ['main', 'rice', 'bread', 'drinks', 'beverage', 'dessert', 'appetizer', 'side'], 
+  default: 'main' 
+},
   description: { type: String, default: '' },
   image: { type: String, default: '' }, // URL to image
   isActive: { type: Boolean, default: true },

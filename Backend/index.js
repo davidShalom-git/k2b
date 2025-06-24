@@ -4,7 +4,8 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const hotelRoutes = require('./router/Hotel');
 const waiterRoutes = require('./router/Waiter');
-const { initializeTables, initializeMenuItems } = require('./utils/hotelUtils');
+const { initializeTables } = require('./utils/hotelUtils');
+const { initializeMenuItems } = require('./router/Hotel');
 require('dotenv').config();
 
 const app = express();

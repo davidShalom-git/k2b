@@ -242,6 +242,36 @@ const isValidStatusTransition = (currentStatus, newStatus) => {
   return validTransitions[currentStatus]?.includes(newStatus) || false;
 };
 
+
+// Add this function before module.exports
+
+const initializeTables = async () => {
+  const count = await Table.countDocuments();
+  if (count === 0) {
+    // Create 5 default tables as an example
+    for (let i = 1; i <= 5; i++) {
+      await Table.create({
+        tableId: i,
+        status: 'available',
+        capacity: 4,
+        location: `Table ${i}`,
+        orders: new Map(),
+        total: 0,
+        orderTime: null,
+        billTime: null,
+        payTime: null,
+        customerName: '',
+        customerPhone: '',
+        notes: '',
+        updatedAt: new Date()
+      });
+    }
+    console.log('Default tables created');
+  } else {
+    console.log(`Found ${count} existing tables`);
+  }
+};
+
 module.exports = {
   getCurrentDate,
   getCurrentTime,
@@ -254,5 +284,6 @@ module.exports = {
   getAvailableTables,
   getOccupiedTables,
   formatCurrency,
-  isValidStatusTransition
+  isValidStatusTransition,
+  initializeTables
 };
