@@ -31,7 +31,7 @@ const validateRequest = (requiredFields) => {
   };
 };
 
-// Middleware for manager authentication (basic - should be improved for production)
+// Middleware for manager authentication
 const authenticateManager = (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (token !== 'manager_authenticated') {
@@ -44,15 +44,11 @@ const authenticateManager = (req, res, next) => {
 const initializeMenuItems = async () => {
   try {
     console.log('Initializing menu items...');
-    
-    // Check if menu items already exist
     const existingItems = await MenuItem.countDocuments({});
     if (existingItems > 0) {
       console.log(`Found ${existingItems} existing menu items`);
       return;
     }
-
-    // Default menu items to create if none exist
     const defaultMenuItems = [
       {
         id: 1,
@@ -110,13 +106,10 @@ const initializeMenuItems = async () => {
         isActive: true
       }
     ];
-
-    // Create default menu items
     for (const item of defaultMenuItems) {
       const menuItem = new MenuItem(item);
       await menuItem.save();
     }
-
     console.log('Default menu items created successfully');
   } catch (error) {
     console.error('Error initializing menu items:', error);
@@ -152,7 +145,6 @@ router.get('/menu/:id', async (req, res) => {
       return res.status(404).json({ error: 'Menu item not found' });
     }
 
-    // Get daily pricing if available
     const date = req.query.date || getCurrentDate();
     const dailyPricing = await DailyMenuPricing.findOne({ 
       date, 
@@ -228,7 +220,6 @@ router.post('/menu',
         tags 
       } = req.body;
 
-      // Validate base price
       if (isNaN(parseFloat(basePrice)) || parseFloat(basePrice) <= 0) {
         return res.status(400).json({ error: 'Base price must be a positive number' });
       }
@@ -266,12 +257,10 @@ router.put('/menu/:id', authenticateManager, async (req, res) => {
     const { id } = req.params;
     const updates = { ...req.body };
     
-    // Validate ID
     if (isNaN(parseInt(id))) {
       return res.status(400).json({ error: 'Invalid menu item ID' });
     }
 
-    // Validate basePrice if provided
     if (updates.basePrice !== undefined) {
       if (isNaN(parseFloat(updates.basePrice)) || parseFloat(updates.basePrice) <= 0) {
         return res.status(400).json({ error: 'Base price must be a positive number' });
@@ -403,7 +392,6 @@ router.post('/menu/:id/daily-pricing', authenticateManager, async (req, res) => 
       return res.status(400).json({ error: 'Price must be a positive number' });
     }
 
-    // Check if menu item exists
     const menuItem = await MenuItem.findOne({ id: parseInt(id) });
     if (!menuItem) {
       return res.status(404).json({ error: 'Menu item not found' });
@@ -447,7 +435,6 @@ router.get('/tables', async (req, res) => {
   try {
     const tables = await Table.find({}).sort({ tableId: 1 });
 
-    // Convert to the format expected by frontend
     const tablesObject = {};
     tables.forEach(table => {
       tablesObject[table.tableId] = {
@@ -504,7 +491,6 @@ router.post('/tables', authenticateManager, async (req, res) => {
       return res.status(400).json({ error: 'Invalid table ID' });
     }
 
-    // Check if table already exists
     const existingTable = await Table.findOne({ tableId: newTableId });
     if (existingTable) {
       return res.status(400).json({ error: 'Table with this ID already exists' });
@@ -541,6 +527,9 @@ router.post('/tables', authenticateManager, async (req, res) => {
 });
 
 // Update table
+// ...existing code...
+
+// Update table
 router.put('/tables/:tableId', async (req, res) => {
   try {
     const { tableId } = req.params;
@@ -550,10 +539,16 @@ router.put('/tables/:tableId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid table ID' });
     }
 
-    // Get current table to validate status transition
     const currentTable = await Table.findOne({ tableId: parseInt(tableId) });
     if (!currentTable) {
       return res.status(404).json({ error: 'Table not found' });
+    }
+
+    // Convert orders object to Map if it exists
+    if (updates.orders && typeof updates.orders === 'object') {
+      updates.orders = new Map(Object.entries(updates.orders));
+    } else if (updates.orders) {
+      return res.status(400).json({ error: 'Orders must be a valid object' });
     }
 
     // Validate status transition if status is being updated
@@ -561,11 +556,6 @@ router.put('/tables/:tableId', async (req, res) => {
       return res.status(400).json({ 
         error: `Invalid status transition from ${currentTable.status} to ${updates.status}` 
       });
-    }
-
-    // Convert orders object to Map if it exists
-    if (updates.orders) {
-      updates.orders = new Map(Object.entries(updates.orders));
     }
 
     // Add timestamps based on status changes
@@ -582,7 +572,6 @@ router.put('/tables/:tableId', async (req, res) => {
           updates.payTime = currentTime;
           break;
         case 'available':
-          // Reset times when table becomes available
           updates.orderTime = null;
           updates.billTime = null;
           updates.payTime = null;
@@ -591,6 +580,17 @@ router.put('/tables/:tableId', async (req, res) => {
           updates.notes = '';
           break;
       }
+    }
+
+    // Calculate total if orders are updated
+    if (updates.orders) {
+      let orderTotals = 0;
+      for (const [itemId, qty] of updates.orders.entries()) {
+        // eslint-disable-next-line no-await-in-loop
+        const menuItem = await MenuItem.findOne({ id: parseInt(itemId) });
+        orderTotals += (menuItem?.basePrice || 0) * qty;
+      }
+      updates.total = orderTotals;
     }
 
     updates.updatedAt = new Date();
@@ -617,9 +617,10 @@ router.put('/tables/:tableId', async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating table:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: `Failed to update table: ${error.message}` });
   }
 });
+
 
 // Delete table
 router.delete('/tables/:tableId', authenticateManager, async (req, res) => {
@@ -635,7 +636,6 @@ router.delete('/tables/:tableId', authenticateManager, async (req, res) => {
       return res.status(404).json({ error: 'Table not found' });
     }
 
-    // Check if table is currently occupied
     if (['occupied', 'billed'].includes(table.status)) {
       return res.status(400).json({ error: 'Cannot delete occupied table' });
     }
@@ -659,12 +659,10 @@ router.post('/complete-order', validateRequest(['tableId', 'orderData']), async 
       return res.status(400).json({ error: 'Invalid table ID' });
     }
 
-    // Validate order data
     if (!orderData.total || !orderData.orders) {
       return res.status(400).json({ error: 'Invalid order data' });
     }
 
-    // Update daily stats
     await updateDailyStats({
       tableId: parseInt(tableId),
       total: orderData.total,
@@ -677,7 +675,6 @@ router.post('/complete-order', validateRequest(['tableId', 'orderData']), async 
       paymentMethod: orderData.paymentMethod || 'cash'
     });
 
-    // Clear the table
     await Table.findOneAndUpdate(
       { tableId: parseInt(tableId) },
       {
@@ -747,7 +744,6 @@ router.post('/auth/manager', validateRequest(['password']), async (req, res) => 
   try {
     const { password } = req.body;
     
-    // In production, this should use proper password hashing and database storage
     if (password === process.env.MANAGER_PASSWORD || password === 'admin123') {
       res.json({ 
         success: true, 
@@ -780,9 +776,11 @@ router.get('/health', (req, res) => {
 const initializeServer = async () => {
   try {
     const currentDate = getCurrentDate();
+    const currentTime = getCurrentTime();
+    console.log(`Initializing server at ${currentDate} ${currentTime} IST`);
     await initializeDailyStats(currentDate);
-    await initializeMenuItems(); // Initialize menu items
-    await initializeTables();    // <-- Initialize tables
+    await initializeMenuItems();
+    await initializeTables();
     console.log('Server initialized successfully');
   } catch (error) {
     console.error('Error initializing server:', error);
@@ -792,6 +790,12 @@ const initializeServer = async () => {
 // Initialize when module is loaded
 initializeServer();
 
+// Schedule daily stats initialization at midnight
+cron.schedule('0 0 * * *', async () => {
+  const date = getCurrentDate();
+  console.log(`Running daily stats initialization for ${date}`);
+  await initializeDailyStats(date);
+});
 
 module.exports = router;
 module.exports.initializeMenuItems = initializeMenuItems;
