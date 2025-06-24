@@ -545,9 +545,9 @@ router.put('/tables/:tableId', async (req, res) => {
     }
 
     // Convert orders object to Map if it exists
-    if (updates.orders && typeof updates.orders === 'object') {
+    if (updates.orders && typeof updates.orders === 'object' && !(updates.orders instanceof Map)) {
       updates.orders = new Map(Object.entries(updates.orders));
-    } else if (updates.orders) {
+    } else if (updates.orders && !(updates.orders instanceof Map)) {
       return res.status(400).json({ error: 'Orders must be a valid object' });
     }
 
@@ -588,7 +588,10 @@ router.put('/tables/:tableId', async (req, res) => {
       for (const [itemId, qty] of updates.orders.entries()) {
         // eslint-disable-next-line no-await-in-loop
         const menuItem = await MenuItem.findOne({ id: parseInt(itemId) });
-        orderTotals += (menuItem?.basePrice || 0) * qty;
+        if (!menuItem) {
+          return res.status(400).json({ error: `Menu item with id ${itemId} not found` });
+        }
+        orderTotals += (menuItem.basePrice || 0) * qty;
       }
       updates.total = orderTotals;
     }
@@ -600,6 +603,10 @@ router.put('/tables/:tableId', async (req, res) => {
       updates,
       { new: true }
     );
+
+    if (!updatedTable) {
+      return res.status(404).json({ error: 'Table not found after update' });
+    }
 
     res.json({
       id: updatedTable.tableId,
