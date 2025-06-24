@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Minus, DollarSign, Users, Clock, CheckCircle, BarChart3, TrendingUp, RefreshCw, Menu, X, LogOut } from 'lucide-react';
 
 const RestaurantPOS = () => {
-  const API_BASE_URL = 'http://localhost:3000/api/hotel';
+  const API_BASE_URL = 'https://chengam.vercel.app/api/hotel';
   
   const [state, setState] = useState({
     menuItems: [],
