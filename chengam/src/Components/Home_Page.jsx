@@ -12,7 +12,7 @@ const Home_Page = () => {
     const [isLoading, setIsLoading] = useState(false);
 
     const navigate = useNavigate();
-    const API = "https://chengam.vercel.app/api/waiter";
+    const API = "https://k2bhotel.vercel.app/api/waiter"; // Ensure this is the correct API endpoint
 
     const handleChange = (e) => {
         const { name, value } = e.target;
