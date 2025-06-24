@@ -9,10 +9,21 @@ require('dotenv').config();
 
 const app = express();
 
+// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Test route
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'K2B Hotel API is running!', 
+    timestamp: new Date().toISOString(),
+    endpoints: ['/api/hotel/login', '/api/hotel/register']
+  });
+});
+
+// API Routes
 app.use('/api/hotel', hotelRoutes);
 app.use('/api/hotel', waiterRoutes);
 
@@ -23,20 +34,16 @@ mongoose.connect(process.env.MONGODB_URL, {
 })
 .then(async () => {
   console.log('✅ MongoDB Connected');
-  await initializeMenuItems();
-  await initializeTables();
+  try {
+    await initializeMenuItems();
+    await initializeTables();
+  } catch (error) {
+    console.error('Initialization error:', error);
+  }
 })
 .catch((err) => {
   console.error('❌ MongoDB connection error:', err);
 });
 
-// For local development
-const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-}
-
-// ✅ Export the app for Vercel
+// Export for Vercel
 module.exports = app;
