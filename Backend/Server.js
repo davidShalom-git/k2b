@@ -25,7 +25,7 @@ app.get('/', (req, res) => {
 
 // API Routes
 app.use('/api/hotel', hotelRoutes);
-app.use('/api/hotel', waiterRoutes);
+app.use('/api/waiter', waiterRoutes);
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URL, {
