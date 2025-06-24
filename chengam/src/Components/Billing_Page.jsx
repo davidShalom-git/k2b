@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Minus, DollarSign, Users, Clock, CheckCircle, BarChart3, TrendingUp, RefreshCw, Menu, X, LogOut } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, Minus, DollarSign, Users, Clock, CheckCircle, BarChart3, RefreshCw, Menu, X, LogOut, ArrowLeft, Snowflake, ChefHat, Utensils, CreditCard, Timer, TrendingUp } from 'lucide-react';
 
 const RestaurantPOS = () => {
   const API_BASE_URL = 'https://chengam.vercel.app/api/hotel';
@@ -7,8 +7,9 @@ const RestaurantPOS = () => {
   const [state, setState] = useState({
     menuItems: [],
     tables: {},
-    selectedTable: 1,
+    selectedTable: null,
     activeView: 'tables',
+    roomType: 'regular',
     dailyStats: { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, popularItems: {}, completedOrders: [] },
     loading: false,
     error: '',
@@ -17,10 +18,10 @@ const RestaurantPOS = () => {
     showMobileMenu: false
   });
 
-  const updateState = (updates) => setState(prev => ({ ...prev, ...updates }));
+  const updateState = useCallback((updates) => setState(prev => ({ ...prev, ...updates })), []);
 
-  // API Helper
-  const apiCall = async (endpoint, method = 'GET', body = null) => {
+  // API call function with better error handling
+  const apiCall = useCallback(async (endpoint, method = 'GET', body = null) => {
     try {
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method,
@@ -32,11 +33,24 @@ const RestaurantPOS = () => {
     } catch (err) {
       throw new Error(err.message);
     }
-  };
+  }, []);
 
-  // Data Fetching
-  const fetchAllData = async () => {
-    if (state.loading) return; // Prevent concurrent fetches
+  // Memoized calculations for performance
+  const filteredTables = useMemo(() => {
+    return Object.values(state.tables).filter(table => {
+      return state.roomType === 'ac' ? table.id > 20 : table.id <= 20;
+    });
+  }, [state.tables, state.roomType]);
+
+  const activeOrders = useMemo(() => {
+    return Object.values(state.tables).filter(table => 
+      table.status !== 'available' && Object.keys(table.orders).length > 0
+    );
+  }, [state.tables]);
+
+  // Fetch data
+  const fetchAllData = useCallback(async () => {
+    if (state.loading) return;
     try {
       updateState({ loading: true, error: '' });
       const [menuItems, tables, dailyStats] = await Promise.all([
@@ -48,663 +62,821 @@ const RestaurantPOS = () => {
     } catch (err) {
       updateState({ error: 'Failed to load data: ' + err.message, loading: false });
     }
-  };
+  }, [state.loading, apiCall, updateState]);
 
-  // Table Operations
-  const calculateTotal = (orders) => {
+  // Calculate total
+  const calculateTotal = useCallback((orders) => {
     return Object.entries(orders).reduce((sum, [id, qty]) => {
       const item = state.menuItems.find(item => item.id === parseInt(id));
       return sum + (item ? item.price * qty : 0);
     }, 0);
-  };
+  }, [state.menuItems]);
 
-  const updateTable = async (tableId, updates) => {
+  // Update table
+  const updateTable = useCallback(async (tableId, updates) => {
     try {
       const updatedTable = await apiCall(`/tables/${tableId}`, 'PUT', updates);
       updateState({ tables: { ...state.tables, [tableId]: updatedTable } });
     } catch (err) {
       updateState({ error: 'Failed to update table: ' + err.message });
     }
-  };
+  }, [apiCall, updateState, state.tables]);
 
-  const completeOrder = async (tableId, orderData) => {
-    try {
-      await apiCall('/complete-order', 'POST', { tableId, orderData });
-      await fetchAllData();
-    } catch (err) {
-      updateState({ error: 'Failed to complete order: ' + err.message });
-    }
-  };
+  // Handle table actions
+  const handleTableAction = useCallback(async (tableId, action, itemId = null) => {
+    const table = state.tables[tableId];
+    if (!table) return;
 
-  // Table Actions
-  const tableActions = {
-    addItem: async (tableId, itemId, event) => {
-      event.preventDefault(); // Prevent default behavior
-      const table = state.tables[tableId];
-      const newOrders = { ...table.orders, [itemId]: (table.orders[itemId] || 0) + 1 };
-      const updates = {
-        orders: newOrders,
-        total: calculateTotal(newOrders),
-        status: table.status === 'available' ? 'occupied' : table.status,
-        orderTime: table.status === 'available' ? new Date().toLocaleTimeString() : table.orderTime
-      };
-      await updateTable(tableId, updates);
-    },
-
-    removeItem: async (tableId, itemId, event) => {
-      event.preventDefault(); // Prevent default behavior
-      const table = state.tables[tableId];
-      const newOrders = { ...table.orders };
-      if (newOrders[itemId] > 0) {
-        newOrders[itemId]--;
-        if (newOrders[itemId] === 0) delete newOrders[itemId];
+    switch (action) {
+      case 'addItem': {
+        const newOrders = { ...table.orders, [itemId]: (table.orders[itemId] || 0) + 1 };
+        await updateTable(tableId, {
+          orders: newOrders,
+          total: calculateTotal(newOrders),
+          status: table.status === 'available' ? 'occupied' : table.status,
+          orderTime: table.status === 'available' ? new Date().toLocaleTimeString() : table.orderTime
+        });
+        break;
       }
-      const updates = {
-        orders: newOrders,
-        total: calculateTotal(newOrders),
-        status: Object.keys(newOrders).length === 0 ? 'available' : table.status,
-        orderTime: Object.keys(newOrders).length === 0 ? null : table.orderTime
-      };
-      await updateTable(tableId, updates);
-    },
-
-    processTable: async (tableId, action, event) => {
-      event.preventDefault(); // Prevent default behavior
-      const table = state.tables[tableId];
-      const actions = {
-        bill: { status: 'billed', billTime: new Date().toLocaleTimeString() },
-        paid: { status: 'paid', payTime: new Date().toLocaleTimeString() }
-      };
-      
-      if (action === 'clear') {
-        const orderData = {
-          tableId: table.id, total: table.total, orders: table.orders,
-          orderTime: table.orderTime, billTime: table.billTime, payTime: table.payTime
-        };
-        await completeOrder(tableId, orderData);
-      } else {
-        await updateTable(tableId, actions[action]);
+      case 'removeItem': {
+        const newOrders = { ...table.orders };
+        if (newOrders[itemId] > 0) {
+          newOrders[itemId]--;
+          if (newOrders[itemId] === 0) delete newOrders[itemId];
+        }
+        await updateTable(tableId, {
+          orders: newOrders,
+          total: calculateTotal(newOrders),
+          status: Object.keys(newOrders).length === 0 ? 'available' : table.status
+        });
+        break;
       }
+      case 'bill':
+        await updateTable(tableId, { status: 'billed', billTime: new Date().toLocaleTimeString() });
+        break;
+      case 'paid':
+        await updateTable(tableId, { status: 'paid', payTime: new Date().toLocaleTimeString() });
+        break;
+      case 'clear':
+        await apiCall('/complete-order', 'POST', { tableId, orderData: table });
+        await fetchAllData();
+        break;
     }
-  };
+  }, [state.tables, updateTable, calculateTotal, apiCall, fetchAllData]);
 
-  // Manager Login
-  const handleManagerLogin = async (event) => {
-    event.preventDefault(); // Prevent form submission
-    if (!state.managerPassword.trim()) {
-      updateState({ error: 'Please enter password' });
-      return;
-    }
-    
+  // Manager login
+  const handleManagerLogin = useCallback(async (event) => {
+    event.preventDefault();
     try {
       updateState({ loading: true, error: '' });
       const data = await apiCall('/auth/manager', 'POST', { password: state.managerPassword });
       if (data.success) {
-        updateState({ 
-          isManager: true, 
-          activeView: 'manager', 
-          managerPassword: '', 
-          loading: false 
-        });
-        await fetchAllData();
+        updateState({ isManager: true, activeView: 'manager', managerPassword: '', loading: false });
       } else {
-        updateState({ error: 'Invalid manager password', loading: false });
+        updateState({ error: 'Invalid password', loading: false });
       }
     } catch (err) {
-      updateState({ error: 'Manager login failed: ' + err.message, loading: false });
+      updateState({ error: 'Login failed: ' + err.message, loading: false });
     }
-  };
+  }, [state.managerPassword, apiCall, updateState]);
 
   useEffect(() => {
     fetchAllData();
   }, []);
 
-  // Auto-refresh for manager
-  useEffect(() => {
-    if (state.activeView === 'manager' && state.isManager) {
-      const interval = setInterval(fetchAllData, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [state.activeView, state.isManager]);
+  // Table colors with modern design
+  const getTableStatus = (status) => {
+    const statusConfig = {
+      available: {
+        bg: 'bg-gradient-to-br from-emerald-50 to-green-100',
+        border: 'border-emerald-200',
+        text: 'text-emerald-800',
+        icon: Users,
+        pulse: false
+      },
+      occupied: {
+        bg: 'bg-gradient-to-br from-amber-50 to-yellow-100',
+        border: 'border-amber-200',
+        text: 'text-amber-800',
+        icon: Timer,
+        pulse: true
+      },
+      billed: {
+        bg: 'bg-gradient-to-br from-rose-50 to-red-100',
+        border: 'border-rose-200',
+        text: 'text-rose-800',
+        icon: CreditCard,
+        pulse: false
+      },
+      paid: {
+        bg: 'bg-gradient-to-br from-blue-50 to-indigo-100',
+        border: 'border-blue-200',
+        text: 'text-blue-800',
+        icon: CheckCircle,
+        pulse: false
+      }
+    };
+    return statusConfig[status] || statusConfig.available;
+  };
 
-  // Utility Functions
-  const getTableColor = (status) => ({
-    available: 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200/50 text-emerald-700 hover:from-emerald-100 hover:to-teal-100 shadow-emerald-100/50',
-    occupied: 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200/50 text-amber-700 hover:from-amber-100 hover:to-orange-100 shadow-amber-100/50',
-    billed: 'bg-gradient-to-br from-rose-50 to-pink-50 border-rose-200/50 text-rose-700 hover:from-rose-100 hover:to-pink-100 shadow-rose-100/50',
-    paid: 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200/50 text-blue-700 hover:from-blue-100 hover:to-indigo-100 shadow-blue-100/50'
-  })[status] || 'bg-gradient-to-br from-gray-50 to-slate-50 border-gray-200/50 text-gray-700';
+  // Modern Button Component
+  const Button = ({ children, onClick, variant = 'primary', disabled = false, className = '', size = 'md' }) => {
+    const variants = {
+      primary: 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg hover:shadow-xl',
+      success: 'bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-700 hover:to-green-800 text-white shadow-lg hover:shadow-xl',
+      danger: 'bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-700 hover:to-red-800 text-white shadow-lg hover:shadow-xl',
+      warning: 'bg-gradient-to-r from-amber-600 to-orange-700 hover:from-amber-700 hover:to-orange-800 text-white shadow-lg hover:shadow-xl',
+      secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-sm hover:shadow-md'
+    };
 
-  const getStatusIcon = (status) => ({
-    available: <Users className="w-5 h-5" />,
-    occupied: <Clock className="w-5 h-5" />,
-    billed: <DollarSign className="w-5 h-5" />,
-    paid: <CheckCircle className="w-5 h-5" />
-  })[status];
+    const sizes = {
+      sm: 'px-3 py-1.5 text-sm',
+      md: 'px-4 py-2',
+      lg: 'px-6 py-3 text-lg'
+    };
+    
+    return (
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`${sizes[size]} rounded-xl font-medium transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:transform-none ${variants[variant]} ${className}`}
+      >
+        {children}
+      </button>
+    );
+  };
 
-  // Components
+  // Modern Header Component
   const Header = () => (
-    <header className="bg-white/80 backdrop-blur-xl shadow-lg border-b border-gray-100/50 sticky top-0 z-50">
-      <div className="px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-20">
-          <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <DollarSign className="w-6 h-6 text-white" />
+    <header className="bg-white/80 backdrop-blur-md shadow-lg border-b border-gray-200/50 sticky top-0 z-50">
+      <div className="px-6 py-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            {state.selectedTable && (
+              <button
+                onClick={() => updateState({ selectedTable: null, activeView: 'tables' })}
+                className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl">
+                <ChefHat className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+                  Restaurant POS
+                </h1>
+                <p className="text-sm text-gray-500">Modern Point of Sale</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
-                Restaurant POS
-              </h1>
-              <p className="text-sm text-gray-500">Modern Point of Sale</p>
-            </div>
-            {state.loading && <RefreshCw className="w-5 h-5 animate-spin text-blue-500 ml-4" />}
+            {state.loading && <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />}
           </div>
           
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); fetchAllData(); }}
-              className="p-3 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all transform hover:scale-105 disabled:opacity-50"
-              disabled={state.loading}
+          <div className="flex gap-3">
+            <Button 
+              onClick={fetchAllData} 
+              disabled={state.loading} 
+              variant="secondary"
+              className="p-2"
             >
-              <RefreshCw className={`w-5 h-5 ${state.loading ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); updateState({ showMobileMenu: !state.showMobileMenu }); }}
-              className="lg:hidden p-3 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-            >
-              {state.showMobileMenu ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
+              <RefreshCw className="w-4 h-4" />
+            </Button>
           </div>
         </div>
         
-        <nav className={`${state.showMobileMenu ? 'block' : 'hidden'} lg:block pb-6 lg:pb-0`}>
-          <div className="flex flex-col lg:flex-row lg:space-x-2 space-y-2 lg:space-y-0">
+        {!state.selectedTable && (
+          <nav className="flex gap-2 mt-6">
             {[
-              { key: 'tables', label: 'Tables' },
-              { key: 'orders', label: 'Orders' },
-              { key: 'billing', label: 'Billing' },
-              ...(state.isManager ? [{ key: 'history', label: 'History' }] : []),
-              { key: state.isManager ? 'manager' : 'manager-login', label: 'Manager' }
+              { key: 'tables', label: 'Tables', icon: Users },
+              { key: 'orders', label: 'Orders', icon: Utensils },
+              { key: 'billing', label: 'Billing', icon: CreditCard },
+              { key: state.isManager ? 'manager' : 'manager-login', label: 'Manager', icon: BarChart3 }
             ].map(tab => (
               <button
-                type="button"
                 key={tab.key}
-                onClick={(e) => { e.preventDefault(); updateState({ activeView: tab.key, showMobileMenu: false }); }}
-                className={`px-6 py-3 text-sm font-medium rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                onClick={() => updateState({ activeView: tab.key })}
+                className={`px-6 py-3 text-sm rounded-xl font-medium transition-all duration-200 flex items-center gap-2 ${
                   state.activeView === tab.key 
-                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/25' 
-                    : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
+                    ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
                 }`}
               >
+                <tab.icon className="w-4 h-4" />
                 {tab.label}
               </button>
             ))}
-          </div>
-        </nav>
+          </nav>
+        )}
       </div>
     </header>
   );
 
+  // Views with modern design
   const ManagerLogin = () => (
-    <div className="min-h-[calc(100vh-5rem)] bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
-      <form
-        onSubmit={handleManagerLogin}
-        className="bg-white/80 backdrop-blur-xl p-10 rounded-3xl shadow-2xl w-full max-w-md border border-white/20"
-      >
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <DollarSign className="w-8 h-8 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-6">
+      <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-2xl p-8 w-full max-w-md border border-white/20">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-700 rounded-xl flex items-center justify-center mx-auto mb-4">
+            <BarChart3 className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Manager Access</h2>
-          <p className="text-gray-500 mt-2">Enter your credentials to continue</p>
+          <h2 className="text-2xl font-bold text-gray-800">Manager Login</h2>
+          <p className="text-gray-600">Access management dashboard</p>
         </div>
         
         {state.error && (
-          <div className="bg-red-50 border-l-4 border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6 animate-pulse">
+          <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-4">
             {state.error}
           </div>
         )}
         
-        <div className="space-y-6">
-          <div className="relative">
-            <input
-              type="password"
-              placeholder="Enter Manager Password"
-              value={state.managerPassword}
-              onChange={(e) => updateState({ managerPassword: e.target.value })}
-              className="w-full px-6 py-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white/50 backdrop-blur-sm"
-              autoFocus
-            />
-          </div>
-          
-          <button
-            type="submit"
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white py-4 rounded-xl font-medium transition-all transform hover:scale-105 disabled:opacity-50 shadow-lg"
-            disabled={state.loading}
+        <div className="space-y-4">
+          <input
+            type="password"
+            placeholder="Enter manager password"
+            value={state.managerPassword}
+            onChange={(e) => updateState({ managerPassword: e.target.value })}
+            className="w-full p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+            onKeyPress={(e) => e.key === 'Enter' && handleManagerLogin(e)}
+          />
+          <Button 
+            onClick={handleManagerLogin} 
+            disabled={state.loading} 
+            className="w-full" 
+            size="lg"
           >
             {state.loading ? 'Logging in...' : 'Login'}
-          </button>
-          
-          <button
-            type="button"
-            onClick={(e) => { e.preventDefault(); updateState({ activeView: 'tables', error: '', managerPassword: '' }); }}
-            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-4 rounded-xl font-medium transition-all transform hover:scale-105"
-          >
-            Back to Staff Mode
-          </button>
+          </Button>
         </div>
-      </form>
+      </div>
     </div>
   );
 
   const TablesView = () => (
-    <div className="space-y-8">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-6">
-        {Object.values(state.tables).map(table => (
-          <div
-            key={table.id}
-            className={`p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 transform hover:scale-105 hover:-translate-y-1 shadow-lg ${getTableColor(table.status)} ${
-              state.selectedTable === table.id ? 'ring-4 ring-blue-400/50 shadow-2xl scale-105' : ''
-            }`}
-            onClick={(e) => {updateState({ selectedTable: table.id }); }}
-           
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="font-bold text-lg">Table {table.id}</span>
-              <div className="p-2 bg-white/50 rounded-xl shadow-sm">
-                {getStatusIcon(table.status)}
-              </div>
-            </div>
-            <div className="text-sm font-medium capitalize mb-2 opacity-80">{table.status}</div>
-            {table.total > 0 && (
-              <div className="text-lg font-bold mb-2">₹{table.total}</div>
-            )}
-            {table.orderTime && (
-              <div className="text-xs opacity-70 bg-white/30 px-2 py-1 rounded-lg">
-                Ordered: {table.orderTime}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {state.selectedTable && (
-        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 border border-white/20">
-          <h3 className="text-2xl font-bold mb-6 bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
-            Table {state.selectedTable} - Order Menu
-          </h3>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-            {state.menuItems.map(item => (
-              <div key={item.id} className="flex justify-between items-center p-4 bg-gradient-to-r from-gray-50 to-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all">
-                <div>
-                  <div className="font-semibold text-gray-900">{item.name}</div>
-                  <div className="text-sm text-gray-600 font-medium">₹{item.price}</div>
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={(e) => tableActions.addItem(state.selectedTable, item.id, e)}
-                    className="bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white p-3 rounded-xl transition-all transform hover:scale-110 disabled:opacity-50 shadow-lg"
-                    disabled={['billed', 'paid'].includes(state.tables[state.selectedTable]?.status)}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => tableActions.removeItem(state.selectedTable, item.id, e)}
-                    className="bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white p-3 rounded-xl transition-all transform hover:scale-110 disabled:opacity-50 shadow-lg"
-                    disabled={['billed', 'paid'].includes(state.tables[state.selectedTable]?.status) || !state.tables[state.selectedTable]?.orders[item.id]}
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-4">
-            {[
-              { action: 'bill', label: 'Generate Bill', color: 'from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600', condition: state.tables[state.selectedTable]?.status === 'occupied' && state.tables[state.selectedTable]?.total > 0 },
-              { action: 'paid', label: 'Mark as Paid', color: 'from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600', condition: state.tables[state.selectedTable]?.status === 'billed' },
-              { action: 'clear', label: 'Clear Table', color: 'from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600', condition: state.tables[state.selectedTable]?.status === 'paid' }
-            ].map(({ action, label, color, condition }) => (
-              <button
-                type="button"
-                key={action}
-                onClick={(e) => tableActions.processTable(state.selectedTable, action, e)}
-                className={`flex-1 bg-gradient-to-r ${color} text-white py-4 rounded-xl font-medium transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg`}
-                disabled={!condition}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  const OrdersView = () => (
-    <div className="space-y-8">
-      <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Active Orders</h2>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {Object.values(state.tables)
-          .filter(table => table.status !== 'available' && Object.keys(table.orders).length > 0)
-          .map(table => (
-            <div key={table.id} className={`p-6 rounded-2xl border-2 shadow-lg transition-all duration-300 hover:shadow-xl transform hover:-translate-y-1 ${getTableColor(table.status)}`}>
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h3 className="text-xl font-bold">Table {table.id}</h3>
-                  <span className="text-sm font-medium capitalize opacity-80">{table.status}</span>
-                </div>
-                <div className="p-2 bg-white/50 rounded-xl">
-                  {getStatusIcon(table.status)}
-                </div>
-              </div>
-              
-              <div className="space-y-2 mb-4">
-                {Object.entries(table.orders).map(([itemId, quantity]) => {
-                  const item = state.menuItems.find(i => i.id === parseInt(itemId));
-                  return item ? (
-                    <div key={itemId} className="flex justify-between text-sm bg-white/30 p-2 rounded-lg">
-                      <span className="font-medium">{item.name} ×{quantity}</span>
-                      <span className="font-bold">₹{item.price * quantity}</span>
-                    </div>
-                  ) : null;
-                })}
-              </div>
-              
-              <div className="border-t border-white/30 pt-3">
-                <div className="flex justify-between font-bold text-lg">
-                  <span>Total:</span>
-                  <span>₹{table.total}</span>
-                </div>
-                {table.orderTime && (
-                  <div className="text-xs opacity-70 mt-2 bg-white/30 px-2 py-1 rounded">
-                    Ordered: {table.orderTime}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-      </div>
-      
-      {Object.values(state.tables).filter(table => table.status !== 'available' && Object.keys(table.orders).length > 0).length === 0 && (
-        <div className="text-center py-16 text-gray-500">
-          <Clock className="w-16 h-16 mx-auto mb-4 opacity-30" />
-          <p className="text-xl">No active orders</p>
-          <p className="text-sm opacity-70">Orders will appear here when tables place orders</p>
-        </div>
-      )}
-    </div>
-  );
-
-  const BillingView = () => {
-    const billingSections = [
-      { title: 'Ready for Billing', status: 'occupied', color: 'from-amber-50 to-orange-50 border-amber-200/50', buttonColor: 'from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600', action: 'bill', actionText: 'Generate Bill' },
-      { title: 'Awaiting Payment', status: 'billed', color: 'from-rose-50 to-pink-50 border-rose-200/50', buttonColor: 'from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600', action: 'paid', actionText: 'Mark Paid' },
-      { title: 'Ready to Clear', status: 'paid', color: 'from-blue-50 to-indigo-50 border-blue-200/50', buttonColor: 'from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600', action: 'clear', actionText: 'Clear' }
-    ];
-
-    return (
-      <div className="space-y-8">
-        <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Billing & Payment</h2>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {billingSections.map(({ title, status, color, buttonColor, action, actionText }) => (
-            <div key={status} className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-xl p-8 border border-white/20">
-              <h3 className="text-xl font-bold mb-6 text-gray-800">{title}</h3>
-              <div className="space-y-4">
-                {Object.values(state.tables)
-                  .filter(table => status === 'occupied' ? table.status === status && table.total > 0 : table.status === status)
-                  .map(table => (
-                    <div key={table.id} className={`flex justify-between items-center p-4 rounded-2xl border-2 bg-gradient-to-r ${color} shadow-sm hover:shadow-md transition-all`}>
-                      <div>
-                        <span className="font-bold text-lg">Table {table.id}</span>
-                        <div className="text-sm font-semibold text-gray-700">₹{table.total}</div>
-                        {table.billTime && <div className="text-xs text-gray-600">Billed: {table.billTime}</div>}
-                        {table.payTime && <div className="text-xs text-gray-600">Paid: {table.payTime}</div>}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => tableActions.processTable(table.id, action, e)}
-                        className={`bg-gradient-to-r ${buttonColor} text-white px-4 py-2 rounded-xl text-sm font-medium transition-all transform hover:scale-105 shadow-lg`}
-                      >
-                        {actionText}
-                      </button>
-                    </div>
-                  ))}
-                {Object.values(state.tables).filter(table => status === 'occupied' ? table.status === status && table.total > 0 : table.status === status).length === 0 && (
-                  <p className="text-gray-500 text-center py-8 opacity-70">No items</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const HistoryView = () => (
-    <div className="space-y-8">
-      <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Order History</h2>
-      
-      {state.dailyStats.completedOrders?.length > 0 ? (
-        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-xl overflow-hidden border border-white/20">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
-                <tr>
-                  {['Table', 'Items', 'Total', 'Order Time', 'Completed'].map(header => (
-                    <th key={header} className="px-6 py-4 text-left text-sm font-bold text-gray-900">{header}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {state.dailyStats.completedOrders.slice().reverse().map((order, index) => (
-                  <tr key={index} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-6 py-4 text-sm font-bold">Table {order.tableId}</td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="space-y-1">
-                        {Object.entries(order.orders).map(([itemId, quantity]) => {
-                          const item = state.menuItems.find(i => i.id === parseInt(itemId));
-                          return item ? (
-                            <div key={itemId} className="text-xs bg-gray-100 px-2 py-1 rounded">{item.name} ×{quantity}</div>
-                          ) : null;
-                        })}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm font-bold">₹{order.total}</td>
-                    <td className="px-6 py-4 text-sm">{order.orderTime}</td>
-                    <td className="px-6 py-4 text-sm">{order.payTime}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        <div className="text-center py-16 text-gray-500">
-          <BarChart3 className="w-16 h-16 mx-auto mb-4 opacity-30" />
-          <p className="text-xl">No completed orders today</p>
-          <p className="text-sm opacity-70">Completed orders will appear here</p>
-        </div>
-      )}
-    </div>
-  );
-
-  const ManagerView = () => (
-    <div className="space-y-8">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">Manager Dashboard</h2>
-          <p className="text-gray-500">Overview of today's performance</p>
-        </div>
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      {/* Room Type Toggle */}
+      <div className="flex gap-3 mb-8">
         <button
-          type="button"
-          onClick={(e) => { e.preventDefault(); updateState({ isManager: false, activeView: 'tables' }); }}
-          className="flex items-center gap-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white px-6 py-3 rounded-xl font-medium transition-all transform hover:scale-105 shadow-lg"
+          onClick={() => updateState({ roomType: 'regular' })}
+          className={`px-6 py-3 rounded-xl flex items-center gap-3 font-medium transition-all duration-200 ${
+            state.roomType === 'regular' 
+              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
+              : 'bg-white hover:bg-gray-50 text-gray-700 shadow-md'
+          }`}
         >
-          <LogOut className="w-4 h-4" />
-          Logout
+          <Users className="w-5 h-5" />
+          Regular Tables
+        </button>
+        <button
+          onClick={() => updateState({ roomType: 'ac' })}
+          className={`px-6 py-3 rounded-xl flex items-center gap-3 font-medium transition-all duration-200 ${
+            state.roomType === 'ac' 
+              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
+              : 'bg-white hover:bg-gray-50 text-gray-700 shadow-md'
+          }`}
+        >
+          <Snowflake className="w-5 h-5" />
+          AC Room
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {[
-          { label: 'Total Revenue', value: `₹${state.dailyStats.totalRevenue}`, icon: DollarSign, color: 'from-emerald-500 to-green-500' },
-          { label: 'Total Orders', value: state.dailyStats.totalOrders, icon: BarChart3, color: 'from-blue-500 to-indigo-500' },
-          { label: 'Average Order', value: `₹${state.dailyStats.avgOrderValue}`, icon: TrendingUp, color: 'from-purple-500 to-pink-500' },
-          { label: 'Active Tables', value: Object.values(state.tables).filter(t => t.status !== 'available').length, icon: Users, color: 'from-amber-500 to-orange-500' }
-        ].map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl p-6 border border-white/20 hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">{label}</p>
-                <p className="text-2xl font-bold text-gray-900">{value}</p>
+      {/* Tables Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+        {filteredTables.map(table => {
+          const statusConfig = getTableStatus(table.status);
+          const StatusIcon = statusConfig.icon;
+          
+          return (
+            <div
+              key={table.id}
+              onClick={() => updateState({ selectedTable: table.id, activeView: 'menu' })}
+              className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 transform hover:scale-105 hover:shadow-xl ${statusConfig.bg} ${statusConfig.border} ${statusConfig.text} ${statusConfig.pulse ? 'animate-pulse' : ''}`}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="font-bold text-lg">Table {table.id}</h3>
+                  <p className="text-sm opacity-75 capitalize">{table.status}</p>
+                </div>
+                <div className="p-2 bg-white/50 rounded-lg">
+                  <StatusIcon className="w-5 h-5" />
+                </div>
               </div>
-              <div className={`p-3 bg-gradient-to-r ${color} rounded-xl shadow-lg`}>
-                <Icon className="w-6 h-6 text-white" />
-              </div>
+              
+              {table.total > 0 && (
+                <div className="bg-white/50 rounded-lg p-3 mb-2">
+                  <div className="font-bold text-lg">₹{table.total}</div>
+                </div>
+              )}
+              
+              {table.orderTime && (
+                <div className="text-xs opacity-70 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {table.orderTime}
+                </div>
+              )}
+              
+              {table.status === 'occupied' && (
+                <div className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full animate-ping"></div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+    </div>
+  );
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-xl p-8 border border-white/20">
-          <h3 className="text-xl font-bold mb-6 text-gray-800">Popular Items Today</h3>
-          <div className="space-y-4">
-            {Object.entries(state.dailyStats.popularItems || {})
-              .sort(([,a], [,b]) => b - a)
-              .slice(0, 5)
-              .map(([itemId, count]) => {
+  const MenuView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Table {state.selectedTable}</h2>
+          <p className="text-gray-600">Select items to add to order</p>
+        </div>
+        
+        {/* Current Order Summary */}
+        {state.tables[state.selectedTable]?.total > 0 && (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6 mb-6">
+            <h3 className="font-bold text-lg mb-4 text-blue-800 flex items-center gap-2">
+              <Utensils className="w-5 h-5" />
+              Current Order
+            </h3>
+            <div className="space-y-2 mb-4">
+              {Object.entries(state.tables[state.selectedTable].orders).map(([itemId, qty]) => {
                 const item = state.menuItems.find(i => i.id === parseInt(itemId));
                 return item ? (
-                  <div key={itemId} className="flex justify-between items-center p-4 bg-gradient-to-r from-gray-50 to-white rounded-xl shadow-sm border border-gray-100">
-                    <div>
-                      <div className="font-semibold text-gray-900">{item.name}</div>
-                      <div className="text-sm text-gray-600">₹{item.price}</div>
-                    </div>
-                    <div className="bg-gradient-to-r from-blue-500 to-purple-500 text-white px-3 py-1 rounded-lg text-sm font-bold">
-                      {count} sold
-                    </div>
+                  <div key={itemId} className="flex justify-between items-center py-2 px-3 bg-white/50 rounded-lg">
+                    <span className="font-medium">{item.name} × {qty}</span>
+                    <span className="font-bold text-blue-700">₹{item.price * qty}</span>
                   </div>
                 ) : null;
               })}
-            {Object.keys(state.dailyStats.popularItems || {}).length === 0 && (
-              <p className="text-gray-500 text-center py-8 opacity-70">No items sold today</p>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-xl p-8 border border-white/20">
-          <h3 className="text-xl font-bold mb-6 text-gray-800">Table Status Overview</h3>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { status: 'available', label: 'Available', color: 'from-emerald-50 to-teal-50 border-emerald-200/50 text-emerald-700' },
-              { status: 'occupied', label: 'Occupied', color: 'from-amber-50 to-orange-50 border-amber-200/50 text-amber-700' },
-              { status: 'billed', label: 'Billed', color: 'from-rose-50 to-pink-50 border-rose-200/50 text-rose-700' },
-              { status: 'paid', label: 'Paid', color: 'from-blue-50 to-indigo-50 border-blue-200/50 text-blue-700' }
-            ].map(({ status, label, color }) => {
-              const count = Object.values(state.tables).filter(t => t.status === status).length;
-              return (
-                <div key={status} className={`p-4 rounded-xl border-2 bg-gradient-to-br ${color} text-center`}>
-                  <div className="text-2xl font-bold">{count}</div>
-                  <div className="text-sm font-medium">{label}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-xl p-8 border border-white/20">
-        <h3 className="text-xl font-bold mb-6 text-gray-800">Recent Activity</h3>
-        <div className="space-y-4 max-h-80 overflow-y-auto">
-          {state.dailyStats.completedOrders?.slice(-10).reverse().map((order, index) => (
-            <div key={index} className="flex justify-between items-center p-4 bg-gradient-to-r from-gray-50 to-white rounded-xl shadow-sm border border-gray-100">
-              <div>
-                <div className="font-semibold text-gray-900">Table {order.tableId}</div>
-                <div className="text-sm text-gray-600">
-                  {Object.entries(order.orders).map(([itemId, quantity]) => {
-                    const item = state.menuItems.find(i => i.id === parseInt(itemId));
-                    return item ? `${item.name} ×${quantity}` : '';
-                  }).join(', ')}
-                </div>
-                <div className="text-xs text-gray-500">{order.payTime}</div>
+            </div>
+            <div className="border-t border-blue-200 pt-4">
+              <div className="flex justify-between items-center text-xl font-bold text-blue-800">
+                <span>Total Amount</span>
+                <span>₹{state.tables[state.selectedTable].total}</span>
               </div>
-              <div className="text-lg font-bold text-gray-900">₹{order.total}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Menu Items */}
+        <div className="grid gap-4 mb-8">
+          {state.menuItems.map(item => (
+            <div key={item.id} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p6 hover:shadow-xl transition-all duration-300 p-5">
+              <div className="flex justify-between items-center">
+                <div className="flex-1">
+                  <h4 className="font-bold text-lg text-gray-800">{item.name}</h4>
+                  <p className="text-2xl font-bold text-green-600">₹{item.price}</p>
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="success"
+                    onClick={() => handleTableAction(state.selectedTable, 'addItem', item.id)}
+                    disabled={['billed', 'paid'].includes(state.tables[state.selectedTable]?.status)}
+                    className="p-3 rounded-xl"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() => handleTableAction(state.selectedTable, 'removeItem', item.id)}
+                    disabled={!state.tables[state.selectedTable]?.orders[item.id]}
+                    className="p-3 rounded-xl"
+                  >
+                    <Minus className="w-5 h-5" />
+                  </Button>
+                </div>
+              </div>
             </div>
           ))}
-          {(!state.dailyStats.completedOrders || state.dailyStats.completedOrders.length === 0) && (
-            <p className="text-gray-500 text-center py-8 opacity-70">No recent orders</p>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-4">
+          {state.tables[state.selectedTable]?.status === 'occupied' && state.tables[state.selectedTable]?.total > 0 && (
+            <Button
+              variant="warning"
+              onClick={() => handleTableAction(state.selectedTable, 'bill')}
+              className="flex-1 py-4 text-lg"
+              size="lg"
+            >
+              <CreditCard className="w-5 h-5 mr-2" />
+              Generate Bill
+            </Button>
+          )}
+          {state.tables[state.selectedTable]?.status === 'billed' && (
+            <Button
+              variant="success"
+              onClick={() => handleTableAction(state.selectedTable, 'paid')}
+              className="flex-1 py-4 text-lg"
+              size="lg"
+            >
+              <CheckCircle className="w-5 h-5 mr-2" />
+              Mark as Paid
+            </Button>
+          )}
+          {state.tables[state.selectedTable]?.status === 'paid' && (
+            <Button
+              variant="primary"
+              onClick={() => handleTableAction(state.selectedTable, 'clear')}
+              className="flex-1 py-4 text-lg"
+              size="lg"
+            >
+              <RefreshCw className="w-5 h-5 mr-2" />
+              Clear Table
+            </Button>
           )}
         </div>
       </div>
     </div>
   );
 
-  // Error Display
+  const OrdersView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+            <Utensils className="w-7 h-7" />
+            Active Orders
+          </h2>
+          <p className="text-gray-600 mt-1">Monitor all active table orders</p>
+        </div>
+
+        <div className="grid gap-6">
+          {activeOrders.map(table => {
+            const statusConfig = getTableStatus(table.status);
+            const StatusIcon = statusConfig.icon;
+            
+            return (
+              <div key={table.id} className={`p-6 rounded-2xl shadow-lg ${statusConfig.bg} ${statusConfig.border} ${statusConfig.text}`}>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white/50 rounded-lg">
+                      <StatusIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-xl">Table {table.id}</h3>
+                      <p className="text-sm opacity-75 capitalize">{table.status}</p>
+                    </div>
+                  </div>
+                  {table.orderTime && (
+                    <div className="text-sm opacity-75 flex items-center gap-1">
+                      <Clock className="w-4 h-4" />
+                      {table.orderTime}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="bg-white/50 rounded-xl p-4 mb-4">
+                  <div className="grid gap-2">
+                    {Object.entries(table.orders).map(([itemId, quantity]) => {
+                      const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                      return item ? (
+                        <div key={itemId} className="flex justify-between items-center">
+                          <span className="font-medium">{item.name} ×{quantity}</span>
+                          <span className="font-bold">₹{item.price * quantity}</span>
+                        </div>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+                
+                <div className="flex justify-between items-center">
+                  <div className="text-2xl font-bold">Total: ₹{table.total}</div>
+                  <Button
+                    onClick={() => updateState({ selectedTable: table.id, activeView: 'menu' })}
+                    variant="secondary"
+                    size="sm"
+                  >
+                    View Details
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
+        {activeOrders.length === 0 && (
+          <div className="text-center py-20">
+            <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Utensils className="w-12 h-12 text-gray-400" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-600 mb-2">No Active Orders</h3>
+            <p className="text-gray-500">All tables are available or cleared</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const BillingView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+            <CreditCard className="w-7 h-7" />
+            Billing & Payment
+          </h2>
+          <p className="text-gray-600 mt-1">Manage table billing and payments</p>
+        </div>
+
+        <div className="grid gap-8">
+          {[
+            { 
+              title: 'Ready for Billing', 
+              status: 'occupied', 
+              action: 'bill', 
+              actionText: 'Generate Bill', 
+              variant: 'warning',
+              icon: CreditCard,
+              color: 'from-amber-500 to-orange-600'
+            },
+            { 
+              title: 'Awaiting Payment', 
+              status: 'billed', 
+              action: 'paid', 
+              actionText: 'Mark Paid', 
+              variant: 'success',
+              icon: DollarSign,
+              color: 'from-red-500 to-pink-600'
+            },
+            { 
+              title: 'Ready to Clear', 
+              status: 'paid', 
+              action: 'clear', 
+              actionText: 'Clear Table', 
+              variant: 'primary',
+              icon: CheckCircle,
+              color: 'from-blue-500 to-indigo-600'
+            }
+          ].map(({ title, status, action, actionText, variant, icon: Icon, color }) => (
+            <div key={status} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <div className={`p-3 bg-gradient-to-r ${color} rounded-xl`}>
+                  <Icon className="w-6 h-6 text-white" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+              </div>
+              
+              <div className="grid gap-4">
+                {Object.values(state.tables)
+                  .filter(table => status === 'occupied' ? table.status === status && table.total > 0 : table.status === status)
+                  .map(table => (
+                    <div key={table.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors duration-200">
+                      <div className="flex items-center gap-4">
+                        <div className="font-bold text-lg text-gray-800">Table {table.id}</div>
+                        <div className="text-2xl font-bold text-green-600">₹{table.total}</div>
+                        {table.orderTime && (
+                          <div className="text-sm text-gray-500 flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            {table.orderTime}
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        variant={variant}
+                        onClick={() => handleTableAction(table.id, action)}
+                        size="sm"
+                      >
+                        {actionText}
+                      </Button>
+                    </div>
+                  ))}
+              </div>
+              
+              {Object.values(state.tables).filter(table => 
+                status === 'occupied' ? table.status === status && table.total > 0 : table.status === status
+              ).length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  <Icon className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                  <p>No tables in  this status</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const ManagerView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+              <BarChart3 className="w-7 h-7" />
+              Manager Dashboard
+            </h2>
+            <p className="text-gray-600 mt-1">Business analytics and insights</p>
+          </div>
+          <Button 
+            variant="danger" 
+            onClick={() => updateState({ isManager: false, activeView: 'tables' })}
+            className="flex items-center gap-2"
+            size="sm"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </Button>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {[
+            { 
+              label: 'Total Revenue', 
+              value: `₹${state.dailyStats.totalRevenue.toLocaleString()}`,
+              icon: DollarSign,
+              color: 'from-emerald-500 to-green-600'
+            },
+            { 
+              label: 'Total Orders', 
+              value: state.dailyStats.totalOrders.toLocaleString(),
+              icon: Utensils,
+              color: 'from-blue-500 to-indigo-600'
+            },
+            { 
+              label: 'Avg. Order Value', 
+              value: `₹${state.dailyStats.avgOrderValue.toLocaleString()}`,
+              icon: TrendingUp,
+              color: 'from-purple-500 to-pink-600'
+            },
+            { 
+              label: 'Active Tables', 
+              value: Object.values(state.tables).filter(t => t.status !== 'available').length,
+              icon: Users,
+              color: 'from-amber-500 to-orange-600'
+            }
+          ].map(({ label, value, icon: Icon, color }) => (
+            <div key={label} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-gray-600 font-medium">{label}</p>
+                  <p className="text-2xl font-bold text-gray-800 mt-1">{value}</p>
+                </div>
+                <div className={`p-3 bg-gradient-to-r ${color} rounded-xl`}>
+                  <Icon className="w-6 h-6 text-white" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Additional Insights */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5" />
+              Popular Items
+            </h3>
+            <div className="space-y-3">
+              {Object.entries(state.dailyStats.popularItems || {})
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 5)
+                .map(([itemId, count]) => {
+                  const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                  return item ? (
+                    <div key={itemId} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl hover:bg-gray-100">
+                      <div>
+                        <p className="font-medium text-gray-800">{item.name}</p>
+                        <p className="text-sm text-gray-600">₹{item.price}</p>
+                      </div>
+                      <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-3 py-1 rounded-lg font-medium">
+                        {count} sold
+                      </div>
+                    </div>
+                  ) : null;
+                })}
+              {Object.keys(state.dailyStats.popularItems || {}).length === 0 && (
+                <p className="text-gray-500 text-center py-6">No items sold today</p>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Users className="w-5 h-5" />
+              Table Status Overview
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              {Object.entries({
+                available: 'Available',
+                occupied: 'Occupied',
+                billed: 'Billed',
+                paid: 'Paid'
+              }).map(([status, label]) => {
+                const count = Object.values(state.tables).filter(t => t.status === status).length;
+                const statusConfig = getTableStatus(status);
+                const StatusIcon = statusConfig.icon;
+                return (
+                  <div key={status} className={`p-4 rounded-xl ${statusConfig.bg} ${statusConfig.border} ${statusConfig.text}`}>
+                    <div className="flex items-center gap-3">
+                      <StatusIcon className="w-5 h-5" />
+                      <div>
+                        <p className="text-lg font-bold">{count}</p>
+                        <p className="text-sm">{label}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const HistoryView = () => (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+            <Clock className="w-7 h-7" />
+            Order History
+          </h2>
+          <p className="text-gray-600 mt-1">Recent completed orders</p>
+        </div>
+
+        {state.dailyStats.completedOrders?.length > 0 ? (
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-gray-100/50">
+                  <tr>
+                    {['Table', 'Items', 'Total', 'Order Time', 'Completed'].map(header => (
+                      <th key={header} className="px-6 py-4 font-bold text-gray-800">{header}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200/50">
+                  {state.dailyStats.completedOrders.slice(-20).reverse().map((order, index) => (
+                    <tr key={index} className="hover:bg-gray-50/50 transition-colors duration-200">
+                      <td className="px-6 py-4 font-bold text-gray-800">Table {order.tableId}</td>
+                      <td className="px-6 py-4">
+                        {Object.entries(order.orders).map(([itemId, qty]) => {
+                          const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                          return item ? (
+                            <div key={itemId} className="text-sm text-gray-600">{item.name} × {qty}</div>
+                          ) : null;
+                        })}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-green-600">₹{order.total}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{order.orderTime}</td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{order.payTime}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-6 text-center">
+            <Clock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600 font-medium">No completed orders today</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Error state
   if (state.error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-50 via-pink-50 to-rose-50 flex items-center justify-center p-4">
-        <div className="bg-white/80 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-md border border-white/20 animate-pulse">
-          <div className="text-center">
-            <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <X className="w-8 h-8 text-white" />
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Connection Error</h2>
-            <p className="text-gray-600 mb-6">{state.error}</p>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                updateState({ error: '' });
-                fetchAllData();
-              }}
-              className="w-full bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white py-3 rounded-xl font-medium transition-all transform hover:scale-105"
-            >
-              Try Again
-            </button>
-          </div>
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-pink-50 flex items-center justify-center p-6">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-2xl p-8 max-w-md text-center border border-red-200/50">
+          <X className="w-12 h-12 text-red-600 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">Something went wrong</h2>
+          <p className="text-gray-600 mb-6">{state.error}</p>
+          <Button 
+            onClick={() => { updateState({ error: '' }); fetchAllData(); }} 
+            variant="primary" 
+            size="lg"
+            className="w-full"
+          >
+            Try Again
+          </Button>
         </div>
       </div>
     );
   }
 
-  // Main Render
+  // Main render
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen bg-gray-50">
       <Header />
-      
-      <main className="px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
-          {state.activeView === 'manager-login' && <ManagerLogin />}
-          {state.activeView === 'tables' && <TablesView />}
-          {state.activeView === 'orders' && <OrdersView />}
-          {state.activeView === 'billing' && <BillingView />}
-          {state.activeView === 'history' && state.isManager && <HistoryView />}
-          {state.activeView === 'manager' && state.isManager && <ManagerView />}
-        </div>
+      <main className="pb-8">
+        {state.activeView === 'manager-login' && <ManagerLogin />}
+        {state.activeView === 'tables' && <TablesView />}
+        {state.activeView === 'menu' && state.selectedTable && <MenuView />}
+        {state.activeView === 'orders' && <OrdersView />}
+        {state.activeView === 'billing' && <BillingView />}
+        {state.activeView === 'manager' && state.isManager && <ManagerView />}
+        {state.activeView === 'history' && state.isManager && <HistoryView />}
       </main>
-
-      <style jsx>{`
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
     </div>
   );
 };
