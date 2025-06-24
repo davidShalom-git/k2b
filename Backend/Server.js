@@ -1,4 +1,3 @@
-// Server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -30,6 +29,14 @@ mongoose.connect(process.env.MONGODB_URL, {
 .catch((err) => {
   console.error('❌ MongoDB connection error:', err);
 });
+
+// For local development
+const PORT = process.env.PORT || 3000;
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
 // ✅ Export the app for Vercel
 module.exports = app;
