@@ -19,7 +19,7 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'K2B Hotel API is running!', 
     timestamp: new Date().toISOString(),
-    endpoints: ['/api/hotel/login', '/api/hotel/register']
+    endpoints: ['/api/waiter/login', '/api/waiter/register']
   });
 });
 
