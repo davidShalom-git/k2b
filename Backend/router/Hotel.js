@@ -561,11 +561,15 @@ router.put('/tables/:tableId', async (req, res) => {
     }
 
     // Validate status transition
-    if (updates.status && !isValidStatusTransition(currentTable.status, updates.status)) {
-      return res.status(400).json({
-        error: `Invalid status transition from ${currentTable.status} to ${updates.status}`
-      });
-    }
+  if (
+  updates.status &&
+  updates.status !== currentTable.status &&
+  !isValidStatusTransition(currentTable.status, updates.status)
+) {
+  return res.status(400).json({
+    error: `Invalid status transition from ${currentTable.status} to ${updates.status}`
+  });
+}
 
     // Timestamp management
     if (updates.status) {

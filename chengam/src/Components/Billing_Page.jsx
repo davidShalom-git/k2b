@@ -31,23 +31,31 @@ const RestaurantPOS = () => {
 
   const updateState = useCallback((updates) => setState(prev => ({ ...prev, ...updates })), []);
 
-  const apiCall = useCallback(async (endpoint, method = 'GET', body = null) => {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (state.isManager && state.managerToken) {
-        headers['Authorization'] = `Bearer ${state.managerToken}`;
-      }
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method,
-        headers,
-        ...(body && { body: JSON.stringify(body) })
-      });
-      if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
-      return response.json();
-    } catch (err) {
-      throw new Error(err.message);
+ const apiCall = useCallback(async (endpoint, method = 'GET', body = null) => {
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.isManager && state.managerToken) {
+      headers['Authorization'] = `Bearer ${state.managerToken}`;
     }
-  }, [state.isManager, state.managerToken]);
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method,
+      headers,
+      ...(body && { body: JSON.stringify(body) })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const message = data?.error || data?.message || response.statusText;
+      throw new Error(`API Error: ${message}`);
+    }
+
+    return data;
+  } catch (err) {
+    throw new Error(`API Error: ${err.message}`);
+  }
+}, [state.isManager, state.managerToken]);
 
   const filteredTables = useMemo(() => {
     return Object.values(state.tables).filter(table => {
@@ -211,7 +219,7 @@ const RestaurantPOS = () => {
           const currentOrders = table.orders || {};
           const newOrders = { 
             ...currentOrders, 
-            [itemId]: (currentOrders[itemId] || 0) + 1 
+          [itemId]: Number(currentOrders[itemId] || 0) + 1
           };
           
           const newTotal = calculateTotal(newOrders);
