@@ -249,7 +249,7 @@ const initializeTables = async () => {
   const count = await Table.countDocuments();
   if (count === 0) {
     // Create 5 default tables as an example
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 40; i++) {
       await Table.create({
         tableId: i,
         status: 'available',
