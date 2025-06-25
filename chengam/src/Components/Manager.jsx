@@ -1,19 +1,14 @@
-import React from 'react';
-import { BarChart3, Package, Calendar, Clock, DollarSign, Utensils, TrendingUp, Users, Edit3, Save, Trash2, LogOut, Plus } from 'lucide-react';
+import React, { useCallback } from 'react';
+import {
+  BarChart3, Package, Calendar, Clock, DollarSign, Utensils, TrendingUp, Users,
+  Edit3, Save, Trash2, LogOut, Plus, Sparkles
+} from 'lucide-react';
 
 const Manager = ({
-  state,
-  updateState,
-  getCurrentPrice,
-  getTableStatus,
-  Button,
-  addMenuItem,
-  updateMenuItem,
-  deleteMenuItem,
-  setDailyPrice,
-  menuItems,
-  fetchAllData
+  state, updateState, getCurrentPrice, getTableStatus, Button,
+  addMenuItem, updateMenuItem, deleteMenuItem, setDailyPrice, menuItems, fetchAllData
 }) => {
+  // Consolidated validation and handlers
   const validateMenuItem = (item) => {
     if (!item.name.trim()) return 'Item name is required';
     if (!item.basePrice || item.basePrice <= 0) return 'Valid base price is required';
@@ -21,464 +16,260 @@ const Manager = ({
     return '';
   };
 
-  const handleAddMenuItem = async () => {
+  const handleMenuAction = async (action, id = null) => {
     const error = validateMenuItem(state.newItem);
     if (error) {
       updateState({ menuError: error });
       return;
     }
+    
     updateState({ loading: true, menuError: '' });
     try {
-      await addMenuItem();
-      updateState({ 
-        showAddItem: false, 
+      await (action === 'add' ? addMenuItem() : updateMenuItem(id, state.newItem));
+      updateState({
+        [action === 'add' ? 'showAddItem' : 'editingItem']: action === 'add' ? false : null,
         newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
         loading: false
       });
     } catch (err) {
-      console.error('API Error:', err);
-      updateState({ menuError: `Failed to add item: ${err.message || 'API Error'}`, loading: false });
+      updateState({ 
+        menuError: `Failed to ${action} item: ${err.message || 'API Error'}`, 
+        loading: false 
+      });
     }
   };
 
-  const handleUpdateMenuItem = async (id) => {
-    const error = validateMenuItem(state.newItem);
-    if (error) {
-      updateState({ menuError: error });
-      return;
-    }
-    updateState({ loading: true, menuError: '' });
-    try {
-      await updateMenuItem(id, state.newItem);
-      updateState({ editingItem: null, newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 }, loading: false });
-    } catch (err) {
-      console.error('API Error:', err);
-      updateState({ menuError: `Failed to update item: ${err.message || 'API Error'}`, loading: false });
-    }
-  };
+  const resetForm = () => updateState({
+    showAddItem: false,
+    editingItem: null,
+    editingDailyPrice: null,
+    newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
+    menuError: ''
+  });
 
-  const MenuManagementView = () => (
-    <div className="p-6 bg-gradient-to-br from-gray-100 to-blue-100 min-h-screen transition-all duration-300">
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 mb-8 border border-gray-200">
-          <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-4">
-            <Package className="w-8 h-8 text-blue-600" />
-            Menu Management
-          </h2>
-          <p className="text-gray-600 mt-2 text-lg">Manage your restaurant's menu items and pricing</p>
+  // Reusable components
+  const Card = ({ children, className = '', gradient = false }) => (
+    <div className={`bg-white/95 backdrop-blur-lg rounded-3xl shadow-xl border border-white/20 ${gradient ? 'bg-gradient-to-br from-white/95 to-blue-50/95' : ''} ${className}`}>
+      {children}
+    </div>
+  );
+
+  const StatCard = ({ label, value, icon: Icon, gradient }) => (
+    <Card className="p-6 hover:shadow-2xl hover:-translate-y-1 transition-all duration-300">
+      <div className="flex justify-between items-center">
+        <div>
+          <p className="text-gray-600 font-medium">{label}</p>
+          <p className="text-3xl font-bold text-gray-900 mt-2">{value}</p>
         </div>
+        <div className={`p-4 bg-gradient-to-br ${gradient} rounded-2xl shadow-lg`}>
+          <Icon className="w-7 h-7 text-white" />
+        </div>
+      </div>
+    </Card>
+  );
 
-        {state.showAddItem && (
-          <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 mb-8 border border-gray-200 animate-fade-in">
-            <h3 className="text-2xl font-bold text-gray-900 mb-6">Add New Menu Item</h3>
-            {state.menuError && (
-              <div className="bg-red-50 border border-red-300 text-red-800 p-4 rounded-2xl mb-6 animate-pulse flex items-center justify-between">
-                <span>{state.menuError}</span>
-                {state.menuError.includes('Failed') && (
-                  <Button
-                    onClick={handleAddMenuItem}
-                    className="ml-4 bg-blue-600 text-white rounded-xl px-4 py-2 hover:bg-blue-700 transition-all duration-200"
-                    size="sm"
-                  >
-                    Try Again
-                  </Button>
-                )}
-              </div>
-            )}
-            <div className="grid gap-6 sm:grid-cols-2">
-              <input
-                type="text"
-                placeholder="Item Name"
-                value={state.newItem.name}
-                onChange={(e) => updateState({ newItem: { ...state.newItem, name: e.target.value } })}
-                className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-              />
-              <input
-                type="number"
-                placeholder="Base Price"
-                value={state.newItem.basePrice}
-                onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
-                min="0"
-                step="0.01"
-                className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-              />
+  const FormInput = ({ type = 'text', placeholder, value, onChange, className = '', ...props }) => (
+    <input
+      type={type}
+      placeholder={placeholder}
+      value={value}
+      onChange={onChange}
+      className={`p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 bg-white/80 backdrop-blur-sm transition-all duration-200 hover:border-gray-300 ${className}`}
+      {...props}
+    />
+  );
+
+  const MenuItemCard = ({ item, isEditing, isDaily = false }) => (
+    <Card className="p-6 hover:shadow-lg hover:-translate-y-1 transition-all duration-300" gradient>
+      {isEditing ? (
+        <div className="space-y-4">
+          <FormInput
+            placeholder="Item Name"
+            value={state.newItem.name}
+            onChange={(e) => updateState({ newItem: { ...state.newItem, name: e.target.value } })}
+          />
+          <FormInput
+            type="number"
+            placeholder="Price"
+            value={state.newItem.basePrice}
+            onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
+            min="0"
+            step="0.01"
+          />
+          {!isDaily && (
+            <>
               <select
                 value={state.newItem.category}
                 onChange={(e) => updateState({ newItem: { ...state.newItem, category: e.target.value } })}
-                className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
+                className="p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 bg-white/80 backdrop-blur-sm transition-all duration-200 w-full"
               >
                 <option value="main">Main Course</option>
                 <option value="starter">Starter</option>
                 <option value="dessert">Dessert</option>
                 <option value="beverage">Beverage</option>
               </select>
-              <input
-                type="text"
+              <FormInput
                 placeholder="Description"
                 value={state.newItem.description}
                 onChange={(e) => updateState({ newItem: { ...state.newItem, description: e.target.value } })}
-                className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
               />
-              <input
+              <FormInput
                 type="number"
-                placeholder="Preparation Time (minutes)"
+                placeholder="Prep Time (min)"
                 value={state.newItem.preparationTime}
                 onChange={(e) => updateState({ newItem: { ...state.newItem, preparationTime: e.target.value } })}
                 min="1"
-                className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
               />
-              <div className="flex gap-4 sm:col-span-2">
-                <Button
-                  onClick={handleAddMenuItem}
-                  disabled={state.loading}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200"
-                  size="lg"
-                >
-                  <Save className="w-5 h-5 mr-2" />
-                  Add Item
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => updateState({ 
-                    showAddItem: false, 
-                    newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
-                    menuError: ''
-                  })}
-                  className="flex-1 bg-gray-200 text-gray-800 rounded-2xl hover:bg-gray-300 transition-all duration-200"
-                  size="lg"
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 border border-gray-200">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-2xl font-bold text-gray-900">Menu Items</h3>
+            </>
+          )}
+          {isDaily && (
+            <label className="flex items-center gap-3 p-2">
+              <input
+                type="checkbox"
+                checked={state.newItem.isAvailable !== false}
+                onChange={(e) => updateState({ newItem: { ...state.newItem, isAvailable: e.target.checked } })}
+                className="w-5 h-5 accent-blue-600 rounded"
+              />
+              <span className="font-medium text-gray-700">Available</span>
+            </label>
+          )}
+          <div className="flex gap-3">
             <Button
-              onClick={() => updateState({ showAddItem: true, activeView: 'menu-management' })}
-              variant="primary"
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200"
-              size="sm"
+              onClick={() => isDaily ? 
+                setDailyPrice(item.id, state.newItem.basePrice, state.newItem.isAvailable !== false) :
+                handleMenuAction(item ? 'update' : 'add', item?.id)
+              }
+              disabled={state.loading}
+              className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg transition-all duration-200"
             >
-              <Plus className="w-4 h-4 mr-2" />
-              Add New Item
+              <Save className="w-4 h-4 mr-2" />
+              Save
+            </Button>
+            <Button
+              onClick={resetForm}
+              className="flex-1 bg-gray-200 text-gray-800 rounded-2xl hover:bg-gray-300 transition-all duration-200"
+            >
+              Cancel
             </Button>
           </div>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {menuItems.map(item => (
-              <div key={item.id} className="p-6 bg-gray-50 rounded-2xl border border-gray-200 hover:shadow-md transition-all duration-200">
-                {state.editingItem === item.id ? (
-                  <div className="grid gap-4">
-                    <input
-                      type="text"
-                      value={state.newItem.name}
-                      onChange={(e) => updateState({ newItem: { ...state.newItem, name: e.target.value } })}
-                      className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-                    />
-                    <input
-                      type="number"
-                      value={state.newItem.basePrice}
-                      onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
-                      min="0"
-                      step="0.01"
-                      className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-                    />
-                    <select
-                      value={state.newItem.category}
-                      onChange={(e) => updateState({ newItem: { ...state.newItem, category: e.target.value } })}
-                      className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-                    >
-                      <option value="main">Main Course</option>
-                      <option value="starter">Starter</option>
-                      <option value="dessert">Dessert</option>
-                      <option value="beverage">Beverage</option>
-                    </select>
-                    <input
-                      type="text"
-                      value={state.newItem.description}
-                      onChange={(e) => updateState({ newItem: { ...state.newItem, description: e.target.value } })}
-                      className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-                    />
-                    <input
-                      type="number"
-                      value={state.newItem.preparationTime}
-                      onChange={(e) => updateState({ newItem: { ...state.newItem, preparationTime: e.target.value } })}
-                      min="1"
-                      className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200"
-                    />
-                    <div className="flex gap-4">
-                      <Button
-                        onClick={() => handleUpdateMenuItem(item.id)}
-                        disabled={state.loading}
-                        className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200"
-                        size="sm"
-                      >
-                        <Save className="w-4 h-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => updateState({ editingItem: null, newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 }, menuError: '' })}
-                        className="flex-1 bg-gray-200 text-gray-800 rounded-2xl hover:bg-gray-300 transition-all duration-200"
-                        size="sm"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-bold text-xl text-gray-900">{item.name}</h4>
-                      <p className="text-2xl font-bold text-green-600">₹{getCurrentPrice(item)}</p>
-                      <p className="text-sm text-gray-500 capitalize">{item.category}</p>
-                      {item.description && <p className="text-sm text-gray-600 mt-1">{item.description}</p>}
-                      <p className="text-sm text-gray-500">Prep Time: {item.preparationTime} min</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() => updateState({ 
-                          editingItem: item.id,
-                          newItem: { 
-                            name: item.name, 
-                            basePrice: item.basePrice, 
-                            category: item.category, 
-                            description: item.description || '', 
-                            preparationTime: item.preparationTime 
-                          }
-                        })}
-                        className="bg-gray-200 text-gray-800 rounded-2xl hover:bg-gray-300 transition-all duration-200"
-                        size="sm"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() => deleteMenuItem(item.id)}
-                        className="bg-red-600 text-white rounded-2xl hover:bg-red-700 transition-all duration-200"
-                        size="sm"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
         </div>
-      </div>
-    </div>
-  );
-
-  const DailyPricingView = () => (
-    <div className="p-6 bg-gradient-to-br from-gray-100 to-blue-100 min-h-screen transition-all duration-300">
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 mb-8 border border-gray-200">
-          <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-4">
-            <Calendar className="w-8 h-8 text-blue-600" />
-            Daily Pricing
-          </h2>
-          <p className="text-gray-600 mt-2 text-lg">Adjust daily pricing for menu items</p>
-        </div>
-        <div className="mb-8">
-          <input
-            type="date"
-            value={state.selectedDate}
-            onChange={(e) => updateState({ selectedDate: e.target.value })}
-            className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200 w-full max-w-xs"
-          />
-        </div>
-        {state.menuError && (
-          <div className="bg-red-50 border border-red-300 text-red-800 p-4 rounded-2xl mb-8 animate-pulse">
-            {state.menuError}
-          </div>
-        )}
-        <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 border border-gray-200">
-          <h3 className="text-2xl font-bold text-gray-900 mb-6">Menu Items Pricing</h3>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {menuItems.map(item => (
-              <div key={item.id} className="p-6 bg-gray-50 rounded-2xl border border-gray-200 hover:shadow-md transition-all duration-200">
-                {state.editingDailyPrice === item.id ? (
-                  <div className="grid gap-4">
-                    <div className="flex items-center gap-4">
-                      <input
-                        type="number"
-                        placeholder="Daily Price"
-                        value={state.newItem.basePrice}
-                        onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
-                        min="0"
-                        step="0.01"
-                        className="p-4 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-gray-50 transition-all duration-200 flex-1"
-                      />
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={state.newItem.isAvailable !== false}
-                          onChange={(e) => updateState({ newItem: { ...state.newItem, isAvailable: e.target.checked } })}
-                          className="w-5 h-5 accent-blue-600"
-                        />
-                        Available
-                      </label>
-                    </div>
-                    <div className="flex gap-4">
-                      <Button
-                        onClick={() => {
-                          if (!state.newItem.basePrice || state.newItem.basePrice <= 0) {
-                            updateState({ menuError: 'Valid daily price is required' });
-                            return;
-                          }
-                          setDailyPrice(
-                            item.id, 
-                            state.newItem.basePrice, 
-                            state.newItem.isAvailable !== false
-                          );
-                        }}
-                        disabled={state.loading}
-                        className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200"
-                        size="sm"
-                      >
-                        <Save className="w-4 h-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => updateState({ editingDailyPrice: null, newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 }, menuError: '' })}
-                        className="flex-1 bg-gray-200 text-gray-800 rounded-2xl hover:bg-gray-300 transition-all duration-200"
-                        size="sm"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-bold text-xl text-gray-900">{item.name}</h4>
-                      <p className="text-2xl font-bold text-green-600">₹{getCurrentPrice(item)}</p>
-                      {state.dailyPricing[item.id] && (
-                        <p className="text-sm text-gray-500">
-                          {state.dailyPricing[item.id].isAvailable 
-                            ? `Daily price set for ${state.selectedDate}`
-                            : `Not available on ${state.selectedDate}`}
-                        </p>
-                      )}
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={() => updateState({ 
-                        editingDailyPrice: item.id,
-                        newItem: { 
-                          basePrice: state.dailyPricing[item.id]?.price || item.basePrice,
-                          isAvailable: state.dailyPricing[item.id]?.isAvailable !== false
-                        }
-                      })}
-                      className="bg-gray-200 text-gray-800 rounded-2xl hover:bg-gray-300 transition-all duration-200"
-                      size="sm"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const HistoryView = () => (
-    <div className="p-6 bg-gradient-to-br from-gray-100 to-blue-100 min-h-screen transition-all duration-300">
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 mb-8 border border-gray-200">
-          <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-4">
-            <Clock className="w-8 h-8 text-blue-600" />
-            Order History
-          </h2>
-          <p className="text-gray-600 mt-2 text-lg">View recent completed orders</p>
-        </div>
-        {state.dailyStats.completedOrders?.length > 0 ? (
-          <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl overflow-hidden border border-gray-200">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-gray-100/70">
-                  <tr>
-                    {['Table', 'Items', 'Total', 'Order Time', 'Completed'].map(header => (
-                      <th key={header} className="px-6 py-4 font-bold text-gray-900">{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200/50">
-                  {state.dailyStats.completedOrders.slice(-20).reverse().map((order, index) => (
-                    <tr key={index} className="hover:bg-gray-50/70 transition-colors duration-200">
-                      <td className="px-6 py-4 font-bold text-gray-900">Table {order.tableId}</td>
-                      <td className="px-6 py-4">
-                        {Object.entries(order.orders).map(([itemId, qty]) => {
-                          const item = menuItems.find(i => i.id === parseInt(itemId));
-                          return item ? (
-                            <div key={itemId} className="text-sm text-gray-600">{item.name} × {qty}</div>
-                          ) : null;
-                        })}
-                      </td>
-                      <td className="px-6 py-4 font-bold text-green-600">₹{order.total}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{order.orderTime}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{order.payTime}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      ) : (
+        <div className="flex justify-between items-start">
+          <div className="flex-1">
+            <h4 className="font-bold text-xl text-gray-900 mb-2">{item.name}</h4>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-3xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                ₹{getCurrentPrice(item)}
+              </span>
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium capitalize">
+                {item.category}
+              </span>
             </div>
+            {item.description && <p className="text-gray-600 text-sm mb-2">{item.description}</p>}
+            <p className="text-gray-500 text-sm flex items-center gap-1">
+              <Clock className="w-4 h-4" />
+              {item.preparationTime} min
+            </p>
+            {isDaily && state.dailyPricing[item.id] && (
+              <p className="text-sm text-blue-600 mt-2 font-medium">
+                {state.dailyPricing[item.id].isAvailable ? '✅ Available today' : '❌ Not available'}
+              </p>
+            )}
           </div>
-        ) : (
-          <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 text-center border border-gray-200">
-            <Clock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 font-medium text-lg">No completed orders today</p>
+          <div className="flex gap-2 ml-4">
+            <Button
+              onClick={() => updateState({
+                [isDaily ? 'editingDailyPrice' : 'editingItem']: item.id,
+                newItem: {
+                  name: item.name,
+                  basePrice: isDaily ? (state.dailyPricing[item.id]?.price || item.basePrice) : item.basePrice,
+                  category: item.category,
+                  description: item.description || '',
+                  preparationTime: item.preparationTime,
+                  isAvailable: isDaily ? (state.dailyPricing[item.id]?.isAvailable !== false) : true
+                }
+              })}
+              className="bg-gradient-to-r from-gray-100 to-gray-200 text-gray-700 rounded-2xl hover:from-gray-200 hover:to-gray-300 transition-all duration-200 p-3"
+              size="sm"
+            >
+              <Edit3 className="w-4 h-4" />
+            </Button>
+            {!isDaily && (
+              <Button
+                onClick={() => deleteMenuItem(item.id)}
+                className="bg-gradient-to-r from-red-500 to-red-600 text-white rounded-2xl hover:from-red-600 hover:to-red-700 transition-all duration-200 p-3"
+                size="sm"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </Card>
   );
+
+  const PageHeader = ({ title, icon: Icon, subtitle, action }) => (
+    <Card className="p-8 mb-8" gradient>
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-4xl font-bold text-gray-900 flex items-center gap-4 mb-2">
+            <div className="p-3 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl shadow-lg">
+              <Icon className="w-8 h-8 text-white" />
+            </div>
+            {title}
+          </h2>
+          <p className="text-gray-600 text-lg">{subtitle}</p>
+        </div>
+        {action}
+      </div>
+    </Card>
+  );
+
+  // Tab configuration
+  const tabs = [
+    { key: 'overview', label: 'Overview', icon: BarChart3 },
+    { key: 'menu-management', label: 'Menu', icon: Package },
+    { key: 'daily-pricing', label: 'Pricing', icon: Calendar },
+    { key: 'history', label: 'History', icon: Clock }
+  ];
+
+  const stats = [
+    { label: 'Total Revenue', value: `₹${state.dailyStats.totalRevenue?.toLocaleString?.() ?? 0}`, icon: DollarSign, gradient: 'from-emerald-500 to-green-600' },
+    { label: 'Total Orders', value: state.dailyStats.totalOrders?.toLocaleString?.() ?? 0, icon: Utensils, gradient: 'from-blue-500 to-indigo-600' },
+    { label: 'Avg Order Value', value: `₹${state.dailyStats.avgOrderValue?.toLocaleString?.() ?? 0}`, icon: TrendingUp, gradient: 'from-purple-500 to-pink-600' },
+    { label: 'Active Tables', value: Object.values(state.tables).filter(t => t.status !== 'available').length, icon: Users, gradient: 'from-amber-500 to-orange-600' }
+  ];
 
   return (
-    <div className="p-6 bg-gradient-to-br from-gray-100 to-blue-100 min-h-screen transition-all duration-300">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 border border-gray-200">
-            <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-4">
-              <BarChart3 className="w-8 h-8 text-blue-600" />
-              Manager Dashboard
-            </h2>
-            <p className="text-gray-600 mt-2 text-lg">Business analytics and insights</p>
-          </div>
-          <Button 
-            variant="danger" 
+        {/* Header */}
+        <div className="flex flex-col justify-between items-center mb-8">
+          <PageHeader
+            title="Manager Dashboard"
+            icon={BarChart3}
+            subtitle="Business analytics and insights"
+          />
+          <Button
             onClick={() => updateState({ isManager: false, activeView: 'tables', managerToken: '' })}
-            className="flex items-center gap-2 bg-red-600 text-white rounded-2xl hover:bg-red-700 transition-all duration-200"
-            size="sm"
+            className="flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-2xl hover:from-red-600 hover:to-red-700 hover:shadow-lg transition-all duration-200 px-6 py-3"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-5 h-5" />
             Logout
           </Button>
         </div>
-        <div className="flex gap-4 mb-8 flex-wrap">
-          {[
-            { key: 'overview', label: 'Overview', icon: BarChart3 },
-            { key: 'menu-management', label: 'Menu Management', icon: Package },
-            { key: 'daily-pricing', label: 'Daily Pricing', icon: Calendar },
-            { key: 'history', label: 'History', icon: Clock }
-          ].map(tab => (
+
+        {/* Navigation Tabs */}
+        <div className="flex gap-3 mb-8 overflow-x-auto pb-2">
+          {tabs.map(tab => (
             <button
               key={tab.key}
-              onClick={() => updateState({ activeView: tab.key })}
-              className={`px-6 py-3 text-sm rounded-2xl font-semibold transition-all duration-300 flex items-center gap-2 ${
-                state.activeView === tab.key 
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg' 
-                  : 'bg-gray-200 hover:bg-gray-300 text-gray-800'
+              onClick={() => updateState({ managerTab: tab.key })}
+              className={`px-6 py-4 rounded-2xl font-semibold transition-all duration-300 flex items-center gap-3 whitespace-nowrap ${
+                state.managerTab === tab.key
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xl scale-105'
+                  : 'bg-white/80 backdrop-blur-sm hover:bg-white text-gray-700 hover:shadow-md'
               }`}
             >
               <tab.icon className="w-5 h-5" />
@@ -486,92 +277,181 @@ const Manager = ({
             </button>
           ))}
         </div>
-        {state.activeView === 'overview' && (
+
+        {/* Content */}
+        {state.managerTab === 'overview' && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              {[
-                { label: 'Total Revenue', value: `₹${state.dailyStats.totalRevenue.toLocaleString()}`, icon: DollarSign, color: 'from-emerald-500 to-green-600' },
-                { label: 'Total Orders', value: state.dailyStats.totalOrders.toLocaleString(), icon: Utensils, color: 'from-blue-500 to-indigo-600' },
-                { label: 'Avg. Order Value', value: `₹${state.dailyStats.avgOrderValue.toLocaleString()}`, icon: TrendingUp, color: 'from-purple-500 to-pink-600' },
-                { label: 'Active Tables', value: Object.values(state.tables).filter(t => t.status !== 'available').length, icon: Users, color: 'from-amber-500 to-orange-600' }
-              ].map(({ label, value, icon: Icon, color }) => (
-                <div key={label} className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-6 hover:shadow-xl transition-all duration-300 border border-gray-0">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-gray-600 font-medium text-lg">{label}</p>
-                      <p className="text-2xl font-extrabold text-gray-900 mt-1">{value}</p>
-                    </div>
-                    <div className={`p-3 bg-gradient-to-r ${color} rounded-2xl shadow-md`}>
-                      <Icon className="w-6 h-6 text-white" />
-                    </div>
-                  </div>
-                </div>
+              {stats.map((stat) => (
+                <StatCard key={stat.label} {...stat} />
               ))}
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 border border-gray-200">
-                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <TrendingUp className="w-6 h-6 text-blue-600" />
-                  Popular Items
-                </h3>
-                <div className="space-y-4">
-                  {Object.entries(state.dailyStats.popularItems || {})
-                    .sort(([, a], [, b]) => b - a)
-                    .slice(0, 5)
-                    .map(([itemId, count]) => {
-                      const item = menuItems.find(i => i.id === parseInt(itemId));
-                      return item ? (
-                        <div key={itemId} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-all duration-200">
-                          <div>
-                            <p className="font-semibold text-gray-900">{item.name}</p>
-                            <p className="text-sm text-gray-600">₹{getCurrentPrice(item)}</p>
-                          </div>
-                          <div className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-1 rounded-lg font-semibold">
-                            {count} sold
-                          </div>
-                        </div>
-                      ) : null;
-                    })}
-                  {Object.keys(state.dailyStats.popularItems || {}).length === 0 && (
-                    <p className="text-gray-500 text-center py-6 text-lg">No items sold today</p>
-                  )}
-                </div>
-              </div>
-              <div className="bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl p-8 border border-gray-200">
-                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <Users className="w-6 h-6 text-blue-600" />
-                  Table Status Overview
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  {Object.entries({
-                    available: 'Available',
-                    occupied: 'Occupied',
-                    billed: 'Billed',
-                    paid: 'Paid'
-                  }).map(([status, label]) => {
-                    const count = Object.values(state.tables).filter(t => t.status === status).length;
-                    const statusConfig = getTableStatus(status);
-                    const StatusIcon = statusConfig.icon;
-                    return (
-                      <div key={status} className={`p-4 rounded-2xl ${statusConfig.bg} ${statusConfig.border} ${statusConfig.text} transition-all duration-200`}>
-                        <div className="flex items-center gap-3">
-                          <StatusIcon className="w-6 h-6" />
-                          <div>
-                            <p className="text-lg font-extrabold">{count}</p>
-                            <p className="text-sm">{label}</p>
-                          </div>
+            <Card className="p-8" gradient>
+              <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+                <Users className="w-6 h-6 text-blue-600" />
+                Table Status Overview
+              </h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {Object.entries({ available: 'Available', occupied: 'Occupied', billed: 'Billed', paid: 'Paid' }).map(([status, label]) => {
+                  const count = Object.values(state.tables).filter(t => t.status === status).length;
+                  const statusConfig = getTableStatus(status);
+                  const StatusIcon = statusConfig.icon;
+                  return (
+                    <div key={status} className={`p-4 rounded-2xl ${statusConfig.bg} ${statusConfig.border} transition-all duration-200 hover:scale-105`}>
+                      <div className="flex items-center gap-3">
+                        <StatusIcon className="w-6 h-6" />
+                        <div>
+                          <p className="text-2xl font-bold">{count}</p>
+                          <p className="text-sm opacity-80">{label}</p>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
+            </Card>
           </>
         )}
-        {state.activeView === 'menu-management' && <MenuManagementView />}
-        {state.activeView === 'daily-pricing' && <DailyPricingView />}
-        {state.activeView === 'history' && <HistoryView />}
+
+        {state.managerTab === 'menu-management' && (
+          <>
+            <PageHeader
+              title="Menu Management"
+              icon={Package}
+              subtitle="Manage your restaurant's menu items and pricing"
+              action={
+                <Button
+                  onClick={() => updateState({ showAddItem: true, menuError: '' })}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg transition-all duration-200 px-6 py-3"
+                >
+                  <Plus className="w-5 h-5 mr-2" />
+                  Add Item
+                </Button>
+              }
+            />
+
+            {state.showAddItem && (
+              <Card className="p-8 mb-8" gradient>
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                  <Sparkles className="w-6 h-6 text-blue-600" />
+                  Add New Menu Item
+                </h3>
+                {state.menuError && (
+                  <div className="bg-red-50 border-2 border-red-200 text-red-800 p-4 rounded-2xl mb-6 flex items-center justify-between">
+                    <span>{state.menuError}</span>
+                    {state.menuError.includes('Failed') && (
+                      <Button
+                        onClick={() => handleMenuAction('add')}
+                        className="ml-4 bg-blue-600 text-white rounded-xl px-4 py-2 hover:bg-blue-700"
+                        size="sm"
+                      >
+                        Try Again
+                      </Button>
+                    )}
+                  </div>
+                )}
+                <MenuItemCard item={null} isEditing={true} />
+              </Card>
+            )}
+
+            <Card className="p-8" gradient>
+              <h3 className="text-2xl font-bold text-gray-900 mb-6">Menu Items</h3>
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {menuItems.map(item => (
+                  <MenuItemCard
+                    key={item.id}
+                    item={item}
+                    isEditing={state.editingItem === item.id}
+                  />
+                ))}
+              </div>
+            </Card>
+          </>
+        )}
+
+        {state.managerTab === 'daily-pricing' && (
+          <>
+            <PageHeader
+              title="Daily Pricing"
+              icon={Calendar}
+              subtitle="Adjust daily pricing for menu items"
+            />
+            <div className="mb-8">
+              <FormInput
+                type="date"
+                value={state.selectedDate}
+                onChange={(e) => updateState({ selectedDate: e.target.value })}
+                className="max-w-xs"
+              />
+            </div>
+            {state.menuError && (
+              <div className="bg-red-50 border-2 border-red-200 text-red-800 p-4 rounded-2xl mb-8">
+                {state.menuError}
+              </div>
+            )}
+            <Card className="p-8" gradient>
+              <h3 className="text-2xl font-bold text-gray-900 mb-6">Menu Items Pricing</h3>
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {menuItems.map(item => (
+                  <MenuItemCard
+                    key={item.id}
+                    item={item}
+                    isEditing={state.editingDailyPrice === item.id}
+                    isDaily={true}
+                  />
+                ))}
+              </div>
+            </Card>
+          </>
+        )}
+
+        {state.managerTab === 'history' && (
+          <>
+            <PageHeader
+              title="Order History"
+              icon={Clock}
+              subtitle="View recent completed orders"
+            />
+            {state.dailyStats.completedOrders?.length > 0 ? (
+              <Card className="overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gradient-to-r from-gray-50 to-blue-50">
+                      <tr>
+                        {['Table', 'Items', 'Total', 'Order Time', 'Completed'].map(header => (
+                          <th key={header} className="px-6 py-4 text-left font-bold text-gray-900">{header}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {state.dailyStats.completedOrders.slice(-20).reverse().map((order, index) => (
+                        <tr key={index} className="hover:bg-gray-50/70 transition-colors duration-200">
+                          <td className="px-6 py-4 font-bold text-gray-900">Table {order.tableId}</td>
+                          <td className="px-6 py-4">
+                            {Object.entries(order.orders).map(([itemId, qty]) => {
+                              const item = menuItems.find(i => i.id === parseInt(itemId));
+                              return item ? (
+                                <div key={itemId} className="text-sm text-gray-600">{item.name} × {qty}</div>
+                              ) : null;
+                            })}
+                          </td>
+                          <td className="px-6 py-4 font-bold text-green-600">₹{order.total}</td>
+                          <td className="px-6 py-4 text-sm text-gray-600">{order.orderTime}</td>
+                          <td className="px-6 py-4 text-sm text-gray-600">{order.payTime}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            ) : (
+              <Card className="p-12 text-center" gradient>
+                <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600 font-medium text-lg">No completed orders today</p>
+              </Card>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

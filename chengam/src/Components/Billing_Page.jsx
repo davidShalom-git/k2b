@@ -2,10 +2,11 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Minus, DollarSign, Users, Clock, CheckCircle, BarChart3, RefreshCw, Menu, X, LogOut, ArrowLeft, Snowflake, ChefHat, Utensils, CreditCard, Timer, TrendingUp, Edit3, Save, Trash2, AlertCircle, Calendar, Package } from 'lucide-react';
 import ManagerLogin from '../Components/Manager_Login';
 import Manager from '../Components/Manager';
+import Bill from '../Components/Billing_pdf';
 
 const RestaurantPOS = () => {
   const API_BASE_URL = 'https://k2bhotel.vercel.app/api/hotel';
-  
+
   const [state, setState] = useState({
     menuItems: [],
     tables: {},
@@ -17,6 +18,7 @@ const RestaurantPOS = () => {
     error: '',
     isManager: false,
     managerPassword: '',
+    managerTab: 'overview',
     showMobileMenu: false,
     managerToken: '',
     editingItem: null,
@@ -26,36 +28,42 @@ const RestaurantPOS = () => {
     dailyPricing: {},
     selectedDate: new Date().toISOString().split('T')[0],
     editingDailyPrice: null,
-    showDailyPricing: false
+    showDailyPricing: false,
+    showBill: false,
+    billTable: null,
+    gstRate: 18, // Default GST rate, can be changed by manager
+    showGSTInBill: true, // Can be toggled by manager
   });
+
+
 
   const updateState = useCallback((updates) => setState(prev => ({ ...prev, ...updates })), []);
 
- const apiCall = useCallback(async (endpoint, method = 'GET', body = null) => {
-  try {
-    const headers = { 'Content-Type': 'application/json' };
-    if (state.isManager && state.managerToken) {
-      headers['Authorization'] = `Bearer ${state.managerToken}`;
+  const apiCall = useCallback(async (endpoint, method = 'GET', body = null) => {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (state.isManager && state.managerToken) {
+        headers['Authorization'] = `Bearer ${state.managerToken}`;
+      }
+
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method,
+        headers,
+        ...(body && { body: JSON.stringify(body) })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        const message = data?.error || data?.message || response.statusText;
+        throw new Error(`API Error: ${message}`);
+      }
+
+      return data;
+    } catch (err) {
+      throw new Error(`API Error: ${err.message}`);
     }
-
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      method,
-      headers,
-      ...(body && { body: JSON.stringify(body) })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      const message = data?.error || data?.message || response.statusText;
-      throw new Error(`API Error: ${message}`);
-    }
-
-    return data;
-  } catch (err) {
-    throw new Error(`API Error: ${err.message}`);
-  }
-}, [state.isManager, state.managerToken]);
+  }, [state.isManager, state.managerToken]);
 
   const filteredTables = useMemo(() => {
     return Object.values(state.tables).filter(table => {
@@ -64,7 +72,7 @@ const RestaurantPOS = () => {
   }, [state.tables, state.roomType]);
 
   const activeOrders = useMemo(() => {
-    return Object.values(state.tables).filter(table => 
+    return Object.values(state.tables).filter(table =>
       table.status !== 'available' && Object.keys(table.orders || {}).length > 0
     );
   }, [state.tables]);
@@ -116,7 +124,7 @@ const RestaurantPOS = () => {
         description: state.newItem.description,
         preparationTime: parseInt(state.newItem.preparationTime) || 15
       });
-      updateState({ 
+      updateState({
         menuItems: [...state.menuItems, newItem],
         newItem: { name: '', basePrice: '', category: 'main', description: '', preparationTime: 15 },
         showAddItem: false,
@@ -132,7 +140,7 @@ const RestaurantPOS = () => {
       updateState({ loading: true, menuError: '' });
       const updatedItem = await apiCall(`/menu/${itemId}`, 'PUT', updates);
       updateState({
-        menuItems: state.menuItems.map(item => 
+        menuItems: state.menuItems.map(item =>
           item.id === itemId ? updatedItem : item
         ),
         editingItem: null,
@@ -214,76 +222,76 @@ const RestaurantPOS = () => {
             console.error('Item ID is required for addItem action');
             return;
           }
-          
+
           // Initialize orders if it doesn't exist
           const currentOrders = table.orders || {};
-          const newOrders = { 
-            ...currentOrders, 
-          [itemId]: Number(currentOrders[itemId] || 0) + 1
+          const newOrders = {
+            ...currentOrders,
+            [itemId]: Number(currentOrders[itemId] || 0) + 1
           };
-          
+
           const newTotal = calculateTotal(newOrders);
-          
+
           const updates = {
             orders: newOrders,
             total: newTotal,
             status: table.status === 'available' ? 'occupied' : table.status,
             orderTime: table.status === 'available' ? new Date().toLocaleTimeString() : table.orderTime
           };
-          
+
           console.log('Adding item - Updates:', updates);
           await updateTable(tableId, updates);
           break;
         }
-        
+
         case 'removeItem': {
           if (!itemId) {
             console.error('Item ID is required for removeItem action');
             return;
           }
-          
+
           const currentOrders = table.orders || {};
           const newOrders = { ...currentOrders };
-          
+
           if (newOrders[itemId] && newOrders[itemId] > 0) {
             newOrders[itemId]--;
             if (newOrders[itemId] === 0) {
               delete newOrders[itemId];
             }
           }
-          
+
           const newTotal = calculateTotal(newOrders);
-          
+
           const updates = {
             orders: newOrders,
             total: newTotal,
             status: Object.keys(newOrders).length === 0 ? 'available' : table.status
           };
-          
+
           console.log('Removing item - Updates:', updates);
           await updateTable(tableId, updates);
           break;
         }
-        
+
         case 'bill':
-          await updateTable(tableId, { 
-            status: 'billed', 
-            billTime: new Date().toLocaleTimeString() 
+          await updateTable(tableId, {
+            status: 'billed',
+            billTime: new Date().toLocaleTimeString()
           });
           break;
-          
+
         case 'paid':
-          await updateTable(tableId, { 
-            status: 'paid', 
-            payTime: new Date().toLocaleTimeString() 
+          await updateTable(tableId, {
+            status: 'paid',
+            payTime: new Date().toLocaleTimeString()
           });
           break;
-          
+
         case 'clear':
           await apiCall('/complete-order', 'POST', { tableId, orderData: table });
           await fetchAllData();
           break;
-          
+
         default:
           console.error('Unknown action:', action);
       }
@@ -299,10 +307,10 @@ const RestaurantPOS = () => {
       updateState({ loading: true, error: '' });
       const data = await apiCall('/auth/manager', 'POST', { password: state.managerPassword });
       if (data.success) {
-        updateState({ 
-          isManager: true, 
-          activeView: 'manager', 
-          managerPassword: '', 
+        updateState({
+          isManager: true,
+          activeView: 'manager',
+          managerPassword: '',
           loading: false,
           managerToken: 'manager_authenticated'
         });
@@ -324,6 +332,24 @@ const RestaurantPOS = () => {
       fetchDailyPricing(state.selectedDate);
     }
   }, [state.selectedDate, fetchDailyPricing]);
+
+  const showBillForTable = useCallback((tableId) => {
+    const table = state.tables[tableId];
+    if (table && table.total > 0) {
+      updateState({
+        showBill: true,
+        billTable: table
+      });
+    }
+  }, [state.tables, updateState]);
+
+  const closeBill = useCallback(() => {
+    updateState({
+      showBill: false,
+      billTable: null
+    });
+  }, [updateState]);
+
 
   const getTableStatus = (status) => {
     const statusConfig = {
@@ -382,9 +408,9 @@ const RestaurantPOS = () => {
             {state.loading && <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-blue-600" />}
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
-            <Button 
-              onClick={fetchAllData} 
-              disabled={state.loading} 
+            <Button
+              onClick={fetchAllData}
+              disabled={state.loading}
               variant="secondary"
               className="p-2"
             >
@@ -403,17 +429,15 @@ const RestaurantPOS = () => {
             {[
               { key: 'tables', label: 'Tables', icon: Users },
               { key: 'orders', label: 'Orders', icon: Utensils },
-              { key: 'billing', label: 'Billing', icon: CreditCard },
               { key: state.isManager ? 'manager' : 'manager-login', label: 'Manager', icon: BarChart3 }
             ].map(tab => (
               <button
                 key={tab.key}
                 onClick={() => updateState({ activeView: tab.key, showMobileMenu: false })}
-                className={`px-4 py-2 sm:px-6 sm:py-3 text-sm rounded-xl font-medium transition-all duration-200 flex items-center gap-2 ${
-                  state.activeView === tab.key 
-                    ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
-                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-                }`}
+                className={`px-4 py-2 sm:px-6 sm:py-3 text-sm rounded-xl font-medium transition-all duration-200 flex items-center gap-2 ${state.activeView === tab.key
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
               >
                 <tab.icon className="w-4 h-4" />
                 {tab.label}
@@ -431,22 +455,20 @@ const RestaurantPOS = () => {
         <div className="flex flex-col sm:flex-row gap-3 mb-6 sm:mb-8">
           <button
             onClick={() => updateState({ roomType: 'regular' })}
-            className={`flex-1 px-4 py-2 sm:px-6 sm:py-3 rounded-xl flex items-center justify-center gap-2 sm:gap-3 font-medium transition-all duration-200 ${
-              state.roomType === 'regular' 
-                ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
-                : 'bg-white hover:bg-gray-50 text-gray-700 shadow-md'
-            }`}
+            className={`flex-1 px-4 py-2 sm:px-6 sm:py-3 rounded-xl flex items-center justify-center gap-2 sm:gap-3 font-medium transition-all duration-200 ${state.roomType === 'regular'
+              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
+              : 'bg-white hover:bg-gray-50 text-gray-700 shadow-md'
+              }`}
           >
             <Users className="w-4 h-4 sm:w-5 sm:h-5" />
             Regular Tables
           </button>
           <button
             onClick={() => updateState({ roomType: 'ac' })}
-            className={`flex-1 px-4 py-2 sm:px-6 sm:py-3 rounded-xl flex items-center justify-center gap-2 sm:gap-3 font-medium transition-all duration-200 ${
-              state.roomType === 'ac' 
-                ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg' 
-                : 'bg-white hover:bg-gray-50 text-gray-700 shadow-md'
-            }`}
+            className={`flex-1 px-4 py-2 sm:px-6 sm:py-3 rounded-xl flex items-center justify-center gap-2 sm:gap-3 font-medium transition-all duration-200 ${state.roomType === 'ac'
+              ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg'
+              : 'bg-white hover:bg-gray-50 text-gray-700 shadow-md'
+              }`}
           >
             <Snowflake className="w-4 h-4 sm:w-5 sm:h-5" />
             AC Room
@@ -493,161 +515,82 @@ const RestaurantPOS = () => {
     </div>
   );
 
-  const MenuView = () => {
-    const currentTable = state.tables[state.selectedTable];
-    if (!currentTable) {
-      return (
-        <div className="p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
-          <div className="max-w-4xl mx-auto text-center">
-            <p className="text-lg text-gray-600">Table not found</p>
-          </div>
-        </div>
-      );
-    }
-
+const MenuView = () => {
+  const currentTable = state.tables[state.selectedTable];
+  if (!currentTable) {
     return (
       <div className="p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-6 mb-4 sm:mb-6">
-            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-2">Table {state.selectedTable}</h2>
-            <p className="text-sm text-gray-600">Select items to add to order</p>
-          </div>
-          
-          {currentTable.total > 0 && (
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 sm:p-6 mb-4 sm:mb-6">
-              <h3 className="font-bold text-base sm:text-lg mb-3 sm:mb-4 text-blue-800 flex items-center gap-2">
-                <Utensils className="w-4 h-4 sm:w-5 sm:h-5" />
-                Current Order
-              </h3>
-              <div className="space-y-2 mb-3 sm:mb-4">
-                {Object.entries(currentTable.orders || {}).map(([itemId, qty]) => {
-                  const item = state.menuItems.find(i => i.id === parseInt(itemId));
-                  const price = item ? getCurrentPrice(item) : 0;
-                  return item ? (
-                    <div key={itemId} className="flex justify-between items-center py-2 px-3 bg-white/50 rounded-lg text-sm sm:text-base">
-                      <span className="font-medium">{item.name} × {qty}</span>
-                      <span className="font-bold text-blue-700">₹{price * qty}</span>
-                      <Button
-                        variant="danger"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          console.log('Remove button clicked for item:', itemId);
-                          handleTableAction(state.selectedTable, 'removeItem', itemId);
-                        }}
-                        disabled={!currentTable.orders || !currentTable.orders[itemId] || qty <= 0}
-                        className="p-2"
-                        size="sm"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ) : null;
-                })}
-              </div>
-              <div className="border-t border-blue-200 pt-3 sm:pt-4">
-                <div className="flex justify-between items-center text-base sm:text-xl font-bold text-blue-800">
-                  <span>Total Amount</span>
-                  <span>₹{currentTable.total}</span>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          <div className="grid gap-4 mb-6 sm:mb-8">
-            {state.menuItems.map(item => {
-              const currentPrice = getCurrentPrice(item);
-              const dailyPrice = state.dailyPricing[item.id];
-              const isSpecialPrice = dailyPrice && dailyPrice.price !== item.basePrice;
-              return (
-                <div key={item.id} className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-4 sm:p-6 hover:shadow-xl transition-all duration-300">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="font-bold text-base sm:text-lg text-gray-800">{item.name}</h4>
-                        {isSpecialPrice && (
-                          <span className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-2 py-1 rounded-lg text-xs font-medium">
-                            Special Price
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-lg sm:text-2xl font-bold text-green-600">₹{currentPrice}</p>
-                        {isSpecialPrice && (
-                          <p className="text-sm sm:text-lg text-gray-500 line-through">₹{item.basePrice}</p>
-                        )}
-                      </div>
-                      {item.category && (
-                        <p className="text-xs sm:text-sm text-gray-500 capitalize">{item.category}</p>
-                      )}
-                    </div>
-                    <div className="flex gap-2 sm:gap-3 w-full sm:w-auto">
-                      <Button
-                        variant="success"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          console.log('Add button clicked for item:', item.id, 'table:', state.selectedTable);
-                          handleTableAction(state.selectedTable, 'addItem', item.id);
-                        }}
-                        disabled={['billed', 'paid'].includes(currentTable.status)}
-                        className="flex-1 p-2 sm:p-3 rounded-xl"
-                      >
-                        <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          console.log('Remove button clicked for item:', item.id);
-                          handleTableAction(state.selectedTable, 'removeItem', item.id);
-                        }}
-                        disabled={!currentTable.orders || !currentTable.orders[item.id]}
-                        className="flex-1 p-2 sm:p-3 rounded-xl"
-                      >
-                        <Minus className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-            {currentTable.status === 'occupied' && currentTable.total > 0 && (
-              <Button
-                variant="warning"
-                onClick={() => handleTableAction(state.selectedTable, 'bill')}
-                className="flex-1 py-3 sm:py-4 text-base sm:text-lg font-medium"
-              >
-                <CreditCard className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                Generate Bill
-              </Button>
-            )}
-            {currentTable.status === 'billed' && (
-              <Button
-                variant="success"
-                onClick={() => handleTableAction(state.selectedTable, 'paid')}
-                className="flex-1 py-3 sm:py-4 text-base sm:text-lg font-medium"
-              >
-                <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                Mark as Paid
-              </Button>
-            )}
-            {currentTable.status === 'paid' && (
-              <Button
-                variant="primary"
-                onClick={() => handleTableAction(state.selectedTable, 'clear')}
-                className="flex-1 py-3 sm:py-4 text-base sm:text-lg font-medium"
-              >
-                <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                Clear Table
-              </Button>
-            )}
-          </div>
+        <div className="max-w-4xl mx-auto text-center">
+          <p className="text-lg text-gray-600">Table not found</p>
         </div>
       </div>
     );
-  };
+  }
+
+  return (
+    <div className="p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      <div className="max-w-4xl mx-auto">
+         <Button
+          variant="secondary"
+          size="sm"
+          className="mb-4"
+          onClick={() => updateState({ selectedTable: null, activeView: 'orders' })}
+        >
+           Go to Orders
+        </Button>
+        <h2 className="text-xl font-bold mb-4">Menu for Table {currentTable.id}</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {state.menuItems.map(item => (
+            <div key={item.id} className="bg-white rounded-xl shadow p-4 flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <span className="font-medium">{item.name}</span>
+                <span className="text-green-700 font-bold">₹{getCurrentPrice(item)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleTableAction(currentTable.id, 'removeItem', item.id)}
+                  disabled={!currentTable.orders?.[item.id]}
+                >-</Button>
+                <span>{currentTable.orders?.[item.id] || 0}</span>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => handleTableAction(currentTable.id, 'addItem', item.id)}
+                >+</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Optional: Show current order summary */}
+        <div className="mt-8 bg-white rounded-xl shadow p-4">
+          <h3 className="font-bold mb-2">Current Order</h3>
+          {Object.keys(currentTable.orders || {}).length === 0 ? (
+            <p className="text-gray-500">No items selected.</p>
+          ) : (
+            <ul className="space-y-1">
+              {Object.entries(currentTable.orders).map(([itemId, qty]) => {
+                const item = state.menuItems.find(i => i.id === parseInt(itemId));
+                if (!item) return null;
+                return (
+                  <li key={itemId} className="flex justify-between">
+                    <span>{item.name} × {qty}</span>
+                    <span>₹{getCurrentPrice(item) * qty}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="mt-2 font-bold text-right">
+            Total: ₹{calculateTotal(currentTable.orders)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
   const OrdersView = () => (
     <div className="p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
@@ -693,7 +636,7 @@ const RestaurantPOS = () => {
                       )}
                     </div>
                   </div>
-                  
+
                   <div className="bg-gray-50 rounded-xl p-4 mb-4">
                     <h4 className="font-medium text-gray-700 mb-3">Order Details</h4>
                     <div className="space-y-2">
@@ -709,7 +652,7 @@ const RestaurantPOS = () => {
                       })}
                     </div>
                   </div>
-                  
+
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="primary"
@@ -729,6 +672,13 @@ const RestaurantPOS = () => {
                         Generate Bill
                       </Button>
                     )}
+                    <Button
+                      variant="secondary"
+                      onClick={() => showBillForTable(table.id)}
+                      size="sm"
+                    >
+                      Show Bill
+                    </Button>
                     {table.status === 'billed' && (
                       <Button
                         variant="success"
@@ -759,77 +709,7 @@ const RestaurantPOS = () => {
     </div>
   );
 
-  const BillingView = () => (
-    <div className="p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
-      <div className="max-w-4xl mx-auto">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-6 mb-4 sm:mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-2 flex items-center gap-2">
-            <CreditCard className="w-5 h-5 sm:w-6 sm:h-6" />
-            Billing Dashboard
-          </h2>
-          <p className="text-sm text-gray-600">Daily statistics and revenue overview</p>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6">
-          <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-4 sm:p-6 border border-green-200">
-            <div className="flex items-center justify-between mb-2">
-              <DollarSign className="w-8 h-8 text-green-600" />
-              <span className="text-xs font-medium text-green-700 bg-green-200 px-2 py-1 rounded-lg">Today</span>
-            </div>
-            <p className="text-2xl sm:text-3xl font-bold text-green-700">₹{state.dailyStats.totalRevenue}</p>
-            <p className="text-sm text-green-600">Total Revenue</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-2xl p-4 sm:p-6 border border-blue-200">
-            <div className="flex items-center justify-between mb-2">
-              <Utensils className="w-8 h-8 text-blue-600" />
-              <span className="text-xs font-medium text-blue-700 bg-blue-200 px-2 py-1 rounded-lg">Count</span>
-            </div>
-            <p className="text-2xl sm:text-3xl font-bold text-blue-700">{state.dailyStats.totalOrders}</p>
-            <p className="text-sm text-blue-600">Total Orders</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-purple-50 to-violet-100 rounded-2xl p-4 sm:p-6 border border-purple-200">
-            <div className="flex items-center justify-between mb-2">
-              <BarChart3 className="w-8 h-8 text-purple-600" />
-              <span className="text-xs font-medium text-purple-700 bg-purple-200 px-2 py-1 rounded-lg">Avg</span>
-            </div>
-            <p className="text-2xl sm:text-3xl font-bold text-purple-700">₹{state.dailyStats.avgOrderValue}</p>
-            <p className="text-sm text-purple-600">Average Order</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-orange-50 to-red-100 rounded-2xl p-4 sm:p-6 border border-orange-200">
-            <div className="flex items-center justify-between mb-2">
-              <TrendingUp className="w-8 h-8 text-orange-600" />
-              <span className="text-xs font-medium text-orange-700 bg-orange-200 px-2 py-1 rounded-lg">Active</span>
-            </div>
-            <p className="text-2xl sm:text-3xl font-bold text-orange-700">{activeOrders.length}</p>
-            <p className="text-sm text-orange-600">Active Orders</p>
-          </div>
-        </div>
-
-        {Object.keys(state.dailyStats.popularItems || {}).length > 0 && (
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl p-4 sm:p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5" />
-              Popular Items Today
-            </h3>
-            <div className="space-y-3">
-              {Object.entries(state.dailyStats.popularItems)
-                .sort(([,a], [,b]) => b - a)
-                .slice(0, 5)
-                .map(([itemName, count]) => (
-                  <div key={itemName} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                    <span className="font-medium text-gray-700">{itemName}</span>
-                    <span className="text-lg font-bold text-blue-600">{count} orders</span>
-                  </div>
-                ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
 
   // Main render function
   const renderContent = () => {
@@ -859,12 +739,38 @@ const RestaurantPOS = () => {
         return <TablesView />;
       case 'orders':
         return <OrdersView />;
-      case 'billing':
-        return <BillingView />;
+      
+      // ...existing code...
       case 'manager-login':
-        return <ManagerLogin onLogin={handleManagerLogin} />;
+        return (
+          <ManagerLogin
+            state={state}
+            updateState={updateState}
+            handleManagerLogin={handleManagerLogin}
+            Button={Button}
+          />
+        );
       case 'manager':
-        return state.isManager ? <Manager /> : <ManagerLogin onLogin={handleManagerLogin} />;
+        return state.isManager ? (
+          <Manager state={state} updateState={updateState} apiCall={apiCall}
+            getCurrentPrice={getCurrentPrice}
+            getTableStatus={getTableStatus}
+            Button={Button}
+            addMenuItem={addMenuItem}
+            updateMenuItem={updateMenuItem}
+            deleteMenuItem={deleteMenuItem}
+            setDailyPrice={setDailyPrice}
+            menuItems={state.menuItems}
+            fetchAllData={fetchAllData} />
+        ) : (
+          <ManagerLogin
+            state={state}
+            updateState={updateState}
+            handleManagerLogin={handleManagerLogin}
+            Button={Button}
+          />
+        );
+      // ...existing code...
       default:
         return <TablesView />;
     }
@@ -874,6 +780,17 @@ const RestaurantPOS = () => {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
       <Header />
       {renderContent()}
+      {state.showBill && state.billTable && (
+        <Bill
+          table={state.billTable}
+          menuItems={state.menuItems}
+          getCurrentPrice={getCurrentPrice}
+          onClose={closeBill}
+          restaurantName="Restaurant POS"
+          gstRate={state.gstRate}
+          showGST={state.showGSTInBill}
+        />
+      )}
     </div>
   );
 };

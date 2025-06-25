@@ -46,4 +46,8 @@ mongoose.connect(process.env.MONGODB_URL, {
 });
 
 // Export for Vercel
-module.exports = app;
+// module.exports = app;
+
+app.listen(3000, () => {
+  console.log('🚀 Server is running on http://localhost:3000');
+});
