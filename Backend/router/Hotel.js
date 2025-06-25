@@ -1,453 +1,811 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const { MenuItem, Table, Bill, Revenue, Settings, Manager } = require('../models/Hotel');
+const { DailyStats, Table, MenuItem, DailyMenuPricing, RestaurantSettings } = require('../models/Hotel');
+const { 
+  getCurrentDate, 
+  getCurrentTime,
+  initializeDailyStats, 
+  calculatePopularItems,
+  getNextMenuItemId,
+  getNextTableId,
+  getMenuWithDailyPricing,
+  updateDailyStats,
+  getAvailableTables,
+  getOccupiedTables,
+  formatCurrency,
+  isValidStatusTransition,
+  initializeTables
+} = require('../utils/hotelUtils');
+const cron = require('node-cron');
 
-// JWT Secret
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-
-// Middleware to verify manager token
-const verifyManager = async (req, res, next) => {
-  try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'No token provided' });
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const manager = await Manager.findById(decoded.id);
-    if (!manager || !manager.isActive) return res.status(401).json({ error: 'Invalid token or manager not active' });
-    req.manager = manager;
+// Middleware for request validation
+const validateRequest = (requiredFields) => {
+  return (req, res, next) => {
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    if (missingFields.length > 0) {
+      return res.status(400).json({ 
+        error: `Missing required fields: ${missingFields.join(', ')}` 
+      });
+    }
     next();
-  } catch (error) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
+  };
 };
 
-// Initialize default manager
-const initializeManager = async () => {
+// Middleware for manager authentication
+const authenticateManager = (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token !== 'manager_authenticated') {
+    return res.status(401).json({ error: 'Unauthorized access' });
+  }
+  next();
+};
+
+// Initialize menu items function
+const initializeMenuItems = async () => {
   try {
-    if (!(await Manager.countDocuments())) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await Manager.create({
-        username: 'admin',
-        password: hashedPassword,
-        email: 'admin@restaurant.com',
-        role: 'manager',
-        isActive: true,
-      });
-      console.log('Default manager created - Username: admin, Password: admin123');
+    console.log('Initializing menu items...');
+    const existingItems = await MenuItem.countDocuments({});
+    if (existingItems > 0) {
+      console.log(`Found ${existingItems} existing menu items`);
+      return;
     }
-  } catch (error) {
-    console.error('Error initializing manager:', error);
-  }
-};
-
-// Initialize tables
-const initializeTables = async () => {
-  try {
-    if (!(await Table.countDocuments())) {
-      const tables = Array.from({ length: 40 }, (_, i) => ({
-        tableNumber: i + 1,
-        isAC: i < 5,
-        status: 'available',
-        orders: [],
-      }));
-      await Table.insertMany(tables);
-      console.log('40 tables initialized');
+    const defaultMenuItems = [
+      {
+        id: 1,
+        name: 'Chicken Biryani',
+        basePrice: 180,
+        category: 'main',
+        description: 'Aromatic basmati rice with tender chicken',
+        preparationTime: 25,
+        ingredients: ['Chicken', 'Basmati Rice', 'Spices', 'Yogurt'],
+        tags: ['spicy', 'popular'],
+        isActive: true
+      },
+      {
+        id: 2,
+        name: 'Butter Chicken',
+        basePrice: 220,
+        category: 'main',
+        description: 'Creamy tomato-based chicken curry',
+        preparationTime: 20,
+        ingredients: ['Chicken', 'Tomato', 'Cream', 'Butter'],
+        tags: ['creamy', 'mild'],
+        isActive: true
+      },
+      {
+        id: 3,
+        name: 'Paneer Tikka',
+        basePrice: 160,
+        category: 'appetizer',
+        description: 'Grilled cottage cheese with spices',
+        preparationTime: 15,
+        ingredients: ['Paneer', 'Spices', 'Yogurt'],
+        tags: ['vegetarian', 'grilled'],
+        isActive: true
+      },
+      {
+        id: 4,
+        name: 'Dal Tadka',
+        basePrice: 120,
+        category: 'main',
+        description: 'Yellow lentils with tempering',
+        preparationTime: 15,
+        ingredients: ['Lentils', 'Spices', 'Ghee'],
+        tags: ['vegetarian', 'healthy'],
+        isActive: true
+      },
+      {
+        id: 5,
+        name: 'Masala Chai',
+        basePrice: 25,
+        category: 'beverage',
+        description: 'Traditional Indian spiced tea',
+        preparationTime: 5,
+        ingredients: ['Tea', 'Milk', 'Spices'],
+        tags: ['hot', 'traditional'],
+        isActive: true
+      }
+    ];
+    for (const item of defaultMenuItems) {
+      const menuItem = new MenuItem(item);
+      await menuItem.save();
     }
+    console.log('Default menu items created successfully');
   } catch (error) {
-    console.error('Error initializing tables:', error);
+    console.error('Error initializing menu items:', error);
   }
 };
 
-// Initialize settings
-const initializeSettings = async () => {
-  try {
-    if (!(await Settings.findOne())) {
-      await Settings.create({
-        gstRate: 18,
-        restaurantName: 'My Restaurant',
-        address: '123 Main Street',
-        phone: '+91 9876543210',
-      });
-      console.log('Settings initialized');
-    }
-  } catch (error) {
-    console.error('Error initializing settings:', error);
-  }
-};
+// ======================== MENU MANAGEMENT ROUTES ========================
 
-// Authentication Routes
-router.post('/manager/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-    const manager = await Manager.findOne({ username });
-    if (!manager || !manager.isActive || !(await bcrypt.compare(password, manager.password)))
-      return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign({ id: manager._id, username: manager.username, role: manager.role }, JWT_SECRET, { expiresIn: '24h' });
-    manager.lastLogin = new Date();
-    await manager.save();
-    res.json({ token, manager: { id: manager._id, username: manager.username, email: manager.email, role: manager.role } });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Menu Routes (Public for waiters)
+// Get active menu with daily pricing (NO AUTHENTICATION REQUIRED)
 router.get('/menu', async (req, res) => {
   try {
-    const menuItems = await MenuItem.find({ available: true }).sort({ category: 1, name: 1 });
-    res.json(menuItems);
+    const date = req.query.date || getCurrentDate();
+    const menuWithPricing = await getMenuWithDailyPricing(date);
+    res.json(menuWithPricing);
   } catch (error) {
+    console.error('Error fetching menu:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-router.get('/menu/all', async (req, res) => {
+// Get specific menu item by ID (NO AUTHENTICATION REQUIRED)
+router.get('/menu/:id', async (req, res) => {
   try {
-    const menuItems = await MenuItem.find().sort({ category: 1, name: 1 });
-    res.json(menuItems);
+    const { id } = req.params;
+    
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ error: 'Invalid menu item ID' });
+    }
+
+    const menuItem = await MenuItem.findOne({ id: parseInt(id), isActive: true });
+    
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    const date = req.query.date || getCurrentDate();
+    const dailyPricing = await DailyMenuPricing.findOne({ 
+      date, 
+      menuItemId: parseInt(id) 
+    });
+
+    const response = {
+      id: menuItem.id,
+      name: menuItem.name,
+      basePrice: menuItem.basePrice,
+      currentPrice: dailyPricing ? dailyPricing.price : menuItem.basePrice,
+      category: menuItem.category,
+      description: menuItem.description,
+      image: menuItem.image,
+      preparationTime: menuItem.preparationTime,
+      ingredients: menuItem.ingredients,
+      tags: menuItem.tags,
+      isAvailable: dailyPricing ? dailyPricing.isAvailable : true,
+      specialOffer: dailyPricing ? dailyPricing.specialOffer : '',
+      discount: dailyPricing ? dailyPricing.discount : 0
+    };
+
+    res.json(response);
   } catch (error) {
+    console.error('Error fetching menu item:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/menu', async (req, res) => {
+// Get all menu items (including inactive ones for management)
+router.get('/menu/all', authenticateManager, async (req, res) => {
   try {
-    const { name, price, category, description } = req.body;
-    if (!name || !price || !category) return res.status(400).json({ error: 'Name, price, and category required' });
-    if (await MenuItem.findOne({ name, category })) return res.status(400).json({ error: 'Menu item already exists' });
-    const menuItem = new MenuItem({ name, price, category, description });
-    await menuItem.save();
-    res.status(201).json(menuItem);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
 
-router.put('/menu/:id', async (req, res) => {
-  try {
-    const menuItem = await MenuItem.findByIdAndUpdate(req.params.id, { ...req.body, updatedAt: new Date() }, { new: true });
-    if (!menuItem) return res.status(404).json({ error: 'Menu item not found' });
-    res.json(menuItem);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
+    const menuItems = await MenuItem.find({})
+      .sort({ id: 1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await MenuItem.countDocuments({});
 
-router.delete('/menu/:id', async (req, res) => {
-  try {
-    const menuItem = await MenuItem.findByIdAndUpdate(req.params.id, { available: false, updatedAt: new Date() }, { new: true });
-    if (!menuItem) return res.status(404).json({ error: 'Menu item not found' });
-    res.json({ message: 'Menu item deleted' });
+    res.json({
+      items: menuItems,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.get('/menu/categories', async (req, res) => {
-  try {
-    const categories = await MenuItem.distinct('category');
-    res.json(categories);
-  } catch (error) {
+    console.error('Error fetching all menu items:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Table Routes (Public)
+// Add new menu item
+router.post('/menu', 
+  authenticateManager,
+  validateRequest(['name', 'basePrice']),
+  async (req, res) => {
+    try {
+      const { 
+        name, 
+        basePrice, 
+        category, 
+        description, 
+        image, 
+        preparationTime, 
+        ingredients, 
+        tags 
+      } = req.body;
+
+      if (isNaN(parseFloat(basePrice)) || parseFloat(basePrice) <= 0) {
+        return res.status(400).json({ error: 'Base price must be a positive number' });
+      }
+
+      const id = await getNextMenuItemId();
+      
+      const newMenuItem = new MenuItem({
+        id,
+        name: name.trim(),
+        basePrice: parseFloat(basePrice),
+        category: category || 'main',
+        description: description || '',
+        image: image || '',
+        preparationTime: preparationTime || 15,
+        ingredients: ingredients || [],
+        tags: tags || [],
+        isActive: true
+      });
+
+      await newMenuItem.save();
+      res.status(201).json(newMenuItem);
+    } catch (error) {
+      if (error.code === 11000) {
+        return res.status(400).json({ error: 'Menu item with this ID already exists' });
+      }
+      console.error('Error creating menu item:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Update menu item
+router.put('/menu/:id', authenticateManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body };
+    
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ error: 'Invalid menu item ID' });
+    }
+
+    if (updates.basePrice !== undefined) {
+      if (isNaN(parseFloat(updates.basePrice)) || parseFloat(updates.basePrice) <= 0) {
+        return res.status(400).json({ error: 'Base price must be a positive number' });
+      }
+      updates.basePrice = parseFloat(updates.basePrice);
+    }
+
+    updates.updatedAt = new Date();
+    
+    const updatedMenuItem = await MenuItem.findOneAndUpdate(
+      { id: parseInt(id) },
+      updates,
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedMenuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json(updatedMenuItem);
+  } catch (error) {
+    console.error('Error updating menu item:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete menu item (soft delete)
+router.delete('/menu/:id', authenticateManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (isNaN(parseInt(id))) {
+      return res.status(400).json({ error: 'Invalid menu item ID' });
+    }
+    
+    const updatedMenuItem = await MenuItem.findOneAndUpdate(
+      { id: parseInt(id) },
+      { isActive: false, updatedAt: new Date() },
+      { new: true }
+    );
+
+    if (!updatedMenuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json({ message: 'Menu item deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting menu item:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bulk upload menu items
+router.post('/menu/bulk', 
+  authenticateManager, 
+  validateRequest(['menuItems']),
+  async (req, res) => {
+    try {
+      const { menuItems } = req.body;
+      
+      if (!Array.isArray(menuItems)) {
+        return res.status(400).json({ error: 'menuItems must be an array' });
+      }
+
+      const createdItems = [];
+      const errors = [];
+      let currentId = await getNextMenuItemId();
+
+      for (let i = 0; i < menuItems.length; i++) {
+        const item = menuItems[i];
+        
+        try {
+          if (!item.name || !item.basePrice) {
+            errors.push(`Item ${i + 1}: Missing name or basePrice`);
+            continue;
+          }
+
+          if (isNaN(parseFloat(item.basePrice)) || parseFloat(item.basePrice) <= 0) {
+            errors.push(`Item ${i + 1}: Invalid basePrice`);
+            continue;
+          }
+
+          const newMenuItem = new MenuItem({
+            id: currentId,
+            name: item.name.trim(),
+            basePrice: parseFloat(item.basePrice),
+            category: item.category || 'main',
+            description: item.description || '',
+            image: item.image || '',
+            preparationTime: item.preparationTime || 15,
+            ingredients: item.ingredients || [],
+            tags: item.tags || [],
+            isActive: true
+          });
+
+          await newMenuItem.save();
+          createdItems.push(newMenuItem);
+          currentId++;
+        } catch (error) {
+          errors.push(`Item ${i + 1}: ${error.message}`);
+        }
+      }
+
+      res.status(201).json({ 
+        message: `${createdItems.length} menu items created successfully`,
+        items: createdItems,
+        errors: errors.length > 0 ? errors : undefined
+      });
+    } catch (error) {
+      console.error('Error bulk uploading menu items:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// ======================== DAILY PRICING ROUTES ========================
+
+// Set daily pricing for menu item
+router.post('/menu/:id/daily-pricing', authenticateManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { date, price, isAvailable, specialOffer, discount } = req.body;
+    
+    if (!date || !price) {
+      return res.status(400).json({ error: 'Date and price are required' });
+    }
+
+    if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+      return res.status(400).json({ error: 'Price must be a positive number' });
+    }
+
+    const menuItem = await MenuItem.findOne({ id: parseInt(id) });
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    const dailyPricing = await DailyMenuPricing.findOneAndUpdate(
+      { date, menuItemId: parseInt(id) },
+      {
+        price: parseFloat(price),
+        isAvailable: isAvailable !== undefined ? isAvailable : true,
+        specialOffer: specialOffer || '',
+        discount: discount || 0,
+        updatedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+
+    res.json(dailyPricing);
+  } catch (error) {
+    console.error('Error setting daily pricing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get daily pricing for a specific date
+router.get('/daily-pricing/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const dailyPricing = await DailyMenuPricing.find({ date }).sort({ menuItemId: 1 });
+    res.json(dailyPricing);
+  } catch (error) {
+    console.error('Error fetching daily pricing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ======================== TABLE MANAGEMENT ROUTES ========================
+
+// Get all tables (NO AUTHENTICATION REQUIRED for public viewing)
 router.get('/tables', async (req, res) => {
   try {
-    const tables = await Table.find().sort({ tableNumber: 1 });
-    res.json(tables);
+    const tables = await Table.find({}).sort({ tableId: 1 });
+
+    const tablesObject = {};
+    tables.forEach(table => {
+      tablesObject[table.tableId] = {
+        id: table.tableId,
+        status: table.status,
+        orders: Object.fromEntries(table.orders),
+        total: table.total,
+        orderTime: table.orderTime,
+        billTime: table.billTime,
+        payTime: table.payTime,
+        customerName: table.customerName,
+        customerPhone: table.customerPhone,
+        notes: table.notes
+      };
+    });
+
+    res.json(tablesObject);
   } catch (error) {
+    console.error('Error fetching tables:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/tables/:tableNumber/orders', async (req, res) => {
+// Get available tables
+router.get('/tables/available', async (req, res) => {
   try {
-    const { tableNumber } = req.params;
-    const { menuItemId, quantity } = req.body;
+    const availableTables = await getAvailableTables();
+    res.json(availableTables);
+  } catch (error) {
+    console.error('Error fetching available tables:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
-    // Validate tableNumber
-    const parsedTableNumber = parseInt(tableNumber);
-    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
-      return res.status(400).json({ error: 'Invalid table number' });
+// Get occupied tables
+router.get('/tables/occupied', async (req, res) => {
+  try {
+    const occupiedTables = await getOccupiedTables();
+    res.json(occupiedTables);
+  } catch (error) {
+    console.error('Error fetching occupied tables:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add new table
+router.post('/tables', authenticateManager, async (req, res) => {
+  try {
+    const { tableId, customTableId, capacity, location } = req.body;
+    
+    const newTableId = customTableId || tableId || await getNextTableId();
+    
+    if (isNaN(parseInt(newTableId)) || parseInt(newTableId) <= 0) {
+      return res.status(400).json({ error: 'Invalid table ID' });
     }
 
-    // Validate request body
-    if (!menuItemId || !quantity || quantity <= 0) {
-      return res.status(400).json({ error: 'Menu item ID and positive quantity required' });
+    const existingTable = await Table.findOne({ tableId: newTableId });
+    if (existingTable) {
+      return res.status(400).json({ error: 'Table with this ID already exists' });
     }
 
-    const menuItem = await MenuItem.findById(menuItemId);
-    if (!menuItem || !menuItem.available) {
-      return res.status(404).json({ error: 'Menu item not found or unavailable' });
+    const newTable = new Table({
+      tableId: newTableId,
+      status: 'available',
+      capacity: capacity || 4,
+      location: location || '',
+      orders: new Map(),
+      total: 0,
+      orderTime: null,
+      billTime: null,
+      payTime: null
+    });
+
+    await newTable.save();
+    res.status(201).json({
+      id: newTable.tableId,
+      status: newTable.status,
+      capacity: newTable.capacity,
+      location: newTable.location,
+      orders: {},
+      total: newTable.total,
+      orderTime: newTable.orderTime,
+      billTime: newTable.billTime,
+      payTime: newTable.payTime
+    });
+  } catch (error) {
+    console.error('Error creating table:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update table
+// ...existing code...
+
+// Update table
+// Remove manager authentication from table update route
+
+// Update table (no manager authentication required)
+router.put('/tables/:tableId', async (req, res) => {
+  try {
+    const { tableId } = req.params;
+    const updates = { ...req.body };
+
+    if (isNaN(parseInt(tableId))) {
+      return res.status(400).json({ error: 'Invalid table ID' });
     }
 
-    const table = await Table.findOne({ tableNumber: parsedTableNumber });
-    if (!table) {
+    const currentTable = await Table.findOne({ tableId: parseInt(tableId) });
+    if (!currentTable) {
       return res.status(404).json({ error: 'Table not found' });
     }
 
-    const orderIndex = table.orders.findIndex((order) => order.menuItemId.toString() === menuItemId);
-    if (orderIndex !== -1) {
-      table.orders[orderIndex].quantity += quantity;
-      table.orders[orderIndex].amount = table.orders[orderIndex].quantity * table.orders[orderIndex].price;
-    } else {
-      table.orders.push({
-        menuItemId,
-        name: menuItem.name,
-        price: menuItem.price,
-        quantity,
-        amount: menuItem.price * quantity,
+    // Convert orders object to Map if it exists
+    if (updates.orders && typeof updates.orders === 'object' && !(updates.orders instanceof Map)) {
+      updates.orders = new Map(Object.entries(updates.orders));
+    } else if (updates.orders && !(updates.orders instanceof Map)) {
+      return res.status(400).json({ error: 'Orders must be a valid object' });
+    }
+
+    // Validate status transition if status is being updated
+    if (updates.status && !isValidStatusTransition(currentTable.status, updates.status)) {
+      return res.status(400).json({ 
+        error: `Invalid status transition from ${currentTable.status} to ${updates.status}` 
       });
     }
 
-    table.subtotal = table.orders.reduce((sum, order) => sum + order.amount, 0);
-    table.status = 'occupied';
-    table.lastUpdated = new Date();
-    await table.save();
-    res.json(table);
-  } catch (error) {
-    console.error('Error in POST /tables/:tableNumber/orders:', error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.put('/tables/:tableNumber/orders/:orderIndex', async (req, res) => {
-  try {
-    const { tableNumber, orderIndex } = req.params;
-    const { quantity } = req.body;
-
-    // Validate tableNumber
-    const parsedTableNumber = parseInt(tableNumber);
-    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
-      return res.status(400).json({ error: 'Invalid table number' });
-    }
-
-    // Validate orderIndex and quantity
-    const parsedOrderIndex = parseInt(orderIndex);
-    if (isNaN(parsedOrderIndex) || parsedOrderIndex < 0) {
-      return res.status(400).json({ error: 'Invalid order index' });
-    }
-    if (!quantity || quantity < 0) {
-      return res.status(400).json({ error: 'Positive quantity required' });
-    }
-
-    const table = await Table.findOne({ tableNumber: parsedTableNumber });
-    if (!table) {
-      return res.status(404).json({ error: 'Table not found' });
-    }
-
-    if (quantity === 0) {
-      table.orders.splice(parsedOrderIndex, 1);
-    } else {
-      if (!table.orders[parsedOrderIndex]) {
-        return res.status(404).json({ error: 'Order not found' });
+    // Add timestamps based on status changes
+    if (updates.status) {
+      const currentTime = getCurrentTime();
+      switch (updates.status) {
+        case 'occupied':
+          if (!currentTable.orderTime) updates.orderTime = currentTime;
+          break;
+        case 'billed':
+          updates.billTime = currentTime;
+          break;
+        case 'paid':
+          updates.payTime = currentTime;
+          break;
+        case 'available':
+          updates.orderTime = null;
+          updates.billTime = null;
+          updates.payTime = null;
+          updates.customerName = '';
+          updates.customerPhone = '';
+          updates.notes = '';
+          break;
       }
-      table.orders[parsedOrderIndex].quantity = quantity;
-      table.orders[parsedOrderIndex].amount = table.orders[parsedOrderIndex].price * quantity;
     }
 
-    table.subtotal = table.orders.reduce((sum, order) => sum + order.amount, 0);
-    table.status = table.orders.length ? 'occupied' : 'available';
-    table.lastUpdated = new Date();
-    await table.save();
-    res.json(table);
-  } catch (error) {
-    console.error('Error in PUT /tables/:tableNumber/orders/:orderIndex:', error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.post('/tables/:tableNumber/bill', async (req, res) => {
-  try {
-    const { tableNumber } = req.params;
-
-    // Validate tableNumber
-    const parsedTableNumber = parseInt(tableNumber);
-    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
-      return res.status(400).json({ error: 'Invalid table number' });
+    // Calculate total if orders are updated
+    if (updates.orders) {
+      let orderTotals = 0;
+      for (const [itemId, qty] of updates.orders.entries()) {
+        // eslint-disable-next-line no-await-in-loop
+        const menuItem = await MenuItem.findOne({ id: parseInt(itemId) });
+        if (!menuItem) {
+          return res.status(400).json({ error: `Menu item with id ${itemId} not found` });
+        }
+        orderTotals += (menuItem.basePrice || 0) * qty;
+      }
+      updates.total = orderTotals;
     }
 
-    const table = await Table.findOne({ tableNumber: parsedTableNumber });
-    if (!table || !table.orders.length) {
-      return res.status(400).json({ error: 'No orders found' });
-    }
+    updates.updatedAt = new Date();
 
-    const settings = await Settings.findOne();
-    const gstRate = settings?.gstRate || 18;
-    const subtotal = table.subtotal;
-    const gstAmount = (subtotal * gstRate) / 100;
-    const totalAmount = subtotal + gstAmount;
-    const today = new Date().toISOString().split('T')[0];
-    const billCount = await Bill.countDocuments({ date: today });
-    const billNumber = `BILL-${today}-${String(billCount + 1).padStart(4, '0')}`;
-
-    const bill = new Bill({
-      billNumber,
-      tableNumber: parsedTableNumber,
-      orders: table.orders,
-      subtotal,
-      gstRate,
-      gstAmount,
-      totalAmount,
-      date: today,
-    });
-    await bill.save();
-
-    table.status = 'billed';
-    table.gstAmount = gstAmount;
-    table.totalAmount = totalAmount;
-    await table.save();
-
-    let revenue = await Revenue.findOne({ date: today });
-    if (!revenue) {
-      revenue = new Revenue({ date: today, totalRevenue: 0, totalOrders: 0, bills: [] });
-    }
-    revenue.totalRevenue += totalAmount;
-    revenue.totalOrders += 1;
-    revenue.bills.push(bill._id);
-    await revenue.save();
-
-    res.json({ bill, table });
-  } catch (error) {
-    console.error('Error in POST /tables/:tableNumber/bill:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post('/tables/:tableNumber/clear', async (req, res) => {
-  try {
-    const { tableNumber } = req.params;
-
-    // Validate tableNumber
-    const parsedTableNumber = parseInt(tableNumber);
-    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
-      return res.status(400).json({ error: 'Invalid table number' });
-    }
-
-    const table = await Table.findOneAndUpdate(
-      { tableNumber: parsedTableNumber },
-      { status: 'available', orders: [], subtotal: 0, gstAmount: 0, totalAmount: 0, lastUpdated: new Date() },
+    const updatedTable = await Table.findOneAndUpdate(
+      { tableId: parseInt(tableId) },
+      updates,
       { new: true }
     );
+
+    if (!updatedTable) {
+      return res.status(404).json({ error: 'Table not found after update' });
+    }
+
+    res.json({
+      id: updatedTable.tableId,
+      status: updatedTable.status,
+      capacity: updatedTable.capacity,
+      location: updatedTable.location,
+      orders: Object.fromEntries(updatedTable.orders),
+      total: updatedTable.total,
+      orderTime: updatedTable.orderTime,
+      billTime: updatedTable.billTime,
+      payTime: updatedTable.payTime,
+      customerName: updatedTable.customerName,
+      customerPhone: updatedTable.customerPhone,
+      notes: updatedTable.notes
+    });
+  } catch (error) {
+    console.error('Error updating table:', error);
+    res.status(500).json({ error: `Failed to update table: ${error.message}` });
+  }
+});
+
+
+// Delete table
+router.delete('/tables/:tableId', authenticateManager, async (req, res) => {
+  try {
+    const { tableId } = req.params;
+    
+    if (isNaN(parseInt(tableId))) {
+      return res.status(400).json({ error: 'Invalid table ID' });
+    }
+
+    const table = await Table.findOne({ tableId: parseInt(tableId) });
     if (!table) {
       return res.status(404).json({ error: 'Table not found' });
     }
-    res.json(table);
+
+    if (['occupied', 'billed'].includes(table.status)) {
+      return res.status(400).json({ error: 'Cannot delete occupied table' });
+    }
+
+    await Table.deleteOne({ tableId: parseInt(tableId) });
+    res.json({ message: 'Table deleted successfully' });
   } catch (error) {
-    console.error('Error in POST /tables/:tableNumber/clear:', error);
+    console.error('Error deleting table:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Bill Routes (Public)
-router.get('/bills', async (req, res) => {
-  try {
-    const { date, page = 1, limit = 50 } = req.query;
-    const query = date ? { date } : {};
-    const bills = await Bill.find(query).sort({ createdAt: -1 }).limit(parseInt(limit)).skip((page - 1) * limit);
-    const total = await Bill.countDocuments(query);
-    res.json({ bills, totalPages: Math.ceil(total / limit), currentPage: parseInt(page), total });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// ======================== ORDER MANAGEMENT ROUTES ========================
 
-// Revenue Routes (Public for waiters)
-router.get('/revenue/daily', async (req, res) => {
+// Complete order (when table is cleared/paid)
+router.post('/complete-order', validateRequest(['tableId', 'orderData']), async (req, res) => {
   try {
-    const { date } = req.query;
-    const targetDate = date || new Date().toISOString().split('T')[0];
-    const revenue = await Revenue.findOne({ date: targetDate }).populate('bills');
-    res.json(revenue || { date: targetDate, totalRevenue: 0, totalOrders: 0, bills: [] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    const { tableId, orderData } = req.body;
+    
+    if (isNaN(parseInt(tableId))) {
+      return res.status(400).json({ error: 'Invalid table ID' });
+    }
 
-// Dashboard Stats (Public)
-router.get('/dashboard/stats', async (req, res) => {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    const todayRevenue = await Revenue.findOne({ date: today });
-    const tables = await Table.find();
-    const tableStats = {
-      available: tables.filter(t => t.status === 'available').length,
-      occupied: tables.filter(t => t.status === 'occupied').length,
-      billed: tables.filter(t => t.status === 'billed').length,
-    };
-    const recentBills = await Bill.find().sort({ createdAt: -1 }).limit(5);
-    res.json({
-      todayRevenue: todayRevenue ? todayRevenue.totalRevenue : 0,
-      todayOrders: todayRevenue ? todayRevenue.totalOrders : 0,
-      tableStats,
-      recentBills,
+    if (!orderData.total || !orderData.orders) {
+      return res.status(400).json({ error: 'Invalid order data' });
+    }
+
+    await updateDailyStats({
+      tableId: parseInt(tableId),
+      total: orderData.total,
+      orders: orderData.orders,
+      orderTime: orderData.orderTime,
+      billTime: orderData.billTime,
+      payTime: getCurrentTime(),
+      customerName: orderData.customerName || '',
+      customerPhone: orderData.customerPhone || '',
+      paymentMethod: orderData.paymentMethod || 'cash'
     });
+
+    await Table.findOneAndUpdate(
+      { tableId: parseInt(tableId) },
+      {
+        status: 'available',
+        orders: new Map(),
+        total: 0,
+        orderTime: null,
+        billTime: null,
+        payTime: null,
+        customerName: '',
+        customerPhone: '',
+        notes: '',
+        updatedAt: new Date()
+      }
+    );
+
+    res.json({ success: true, message: 'Order completed successfully' });
   } catch (error) {
+    console.error('Error completing order:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Manager Dashboard Stats (Protected)
-router.get('/manager/dashboard/stats', verifyManager, async (req, res) => {
+// ======================== STATISTICS ROUTES ========================
+
+// Get current day stats
+router.get('/stats', async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const [todayRevenue, yesterdayRevenue, totalMenuItems, activeMenuItems] = await Promise.all([
-      Revenue.findOne({ date: today }),
-      Revenue.findOne({ date: yesterday }),
-      MenuItem.countDocuments(),
-      MenuItem.countDocuments({ available: true }),
-    ]);
-    const tables = await Table.find();
-    const tableStats = {
-      available: tables.filter(t => t.status === 'available').length,
-      occupied: tables.filter(t => t.status === 'occupied').length,
-      billed: tables.filter(t => t.status === 'billed').length,
-      total: tables.length,
-    };
-    const recentBills = await Bill.find().sort({ createdAt: -1 }).limit(10);
-    res.json({
-      todayRevenue: todayRevenue ? todayRevenue.totalRevenue : 0,
-      todayOrders: todayRevenue ? todayRevenue.totalOrders : 0,
-      yesterdayRevenue: yesterdayRevenue ? yesterdayRevenue.totalRevenue : 0,
-      yesterdayOrders: yesterdayRevenue ? yesterdayRevenue.totalOrders : 0,
-      tableStats,
-      menuStats: { total: totalMenuItems, active: activeMenuItems, inactive: totalMenuItems - activeMenuItems },
-      recentBills,
-    });
+    const date = getCurrentDate();
+    await initializeDailyStats(date);
+    
+    const stats = await DailyStats.findOne({ date });
+    
+    if (stats) {
+      res.json({
+        totalRevenue: stats.totalRevenue,
+        totalOrders: stats.totalOrders,
+        avgOrderValue: stats.avgOrderValue,
+        popularItems: Object.fromEntries(stats.popularItems),
+        completedOrders: stats.completedOrders,
+        date: stats.date,
+        lastUpdated: stats.updatedAt,
+        isFinalized: stats.isFinalized
+      });
+    } else {
+      res.json({
+        totalRevenue: 0,
+        totalOrders: 0,
+        avgOrderValue: 0,
+        popularItems: {},
+        completedOrders: [],
+        date,
+        lastUpdated: new Date(),
+        isFinalized: false
+      });
+    }
   } catch (error) {
+    console.error('Error fetching daily stats:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Settings Routes (Public for waiters)
-router.get('/settings', async (req, res) => {
+// ======================== AUTHENTICATION ROUTES ========================
+
+// Manager authentication
+router.post('/auth/manager', validateRequest(['password']), async (req, res) => {
   try {
-    const settings = await Settings.findOne();
-    res.json(settings || {});
+    const { password } = req.body;
+    
+    if (password === process.env.MANAGER_PASSWORD || password === 'admin123') {
+      res.json({ 
+        success: true, 
+        token: 'manager_authenticated',
+        expiresIn: '24h'
+      });
+    } else {
+      res.status(401).json({ success: false, message: 'Invalid password' });
+    }
   } catch (error) {
+    console.error('Error in manager auth:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-router.put('/settings', async (req, res) => {
-  try {
-    const settings = await Settings.findOneAndUpdate({}, { ...req.body, lastUpdated: new Date() }, { new: true, upsert: true });
-    res.json(settings);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
+// ======================== SYSTEM MANAGEMENT ROUTES ========================
+
+// Health check
+router.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
-// Initialize database
-const initializeDatabase = async () => {
-  await initializeTables();
-  await initializeSettings();
-  await initializeManager();
+// ======================== AUTOMATED TASKS ========================
+
+// Initialize server
+const initializeServer = async () => {
+  try {
+    const currentDate = getCurrentDate();
+    const currentTime = getCurrentTime();
+    console.log(`Initializing server at ${currentDate} ${currentTime} IST`);
+    await initializeDailyStats(currentDate);
+    await initializeMenuItems();
+    await initializeTables();
+    console.log('Server initialized successfully');
+  } catch (error) {
+    console.error('Error initializing server:', error);
+  }
 };
 
-module.exports = { router, initializeDatabase };
+// Initialize when module is loaded
+initializeServer();
+
+// Schedule daily stats initialization at midnight
+cron.schedule('0 0 * * *', async () => {
+  const date = getCurrentDate();
+  console.log(`Running daily stats initialization for ${date}`);
+  await initializeDailyStats(date);
+});
+
+module.exports = router;
+module.exports.initializeMenuItems = initializeMenuItems;
