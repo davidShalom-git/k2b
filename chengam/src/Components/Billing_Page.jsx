@@ -65,11 +65,12 @@ const RestaurantPOS = () => {
     }
   }, [state.isManager, state.managerToken]);
 
-  const filteredTables = useMemo(() => {
-    return Object.values(state.tables).filter(table => {
-      return state.roomType === 'ac' ? table.id > 20 : table.id <= 20;
-    });
-  }, [state.tables, state.roomType]);
+ const filteredTables = useMemo(() => {
+  return Object.values(state.tables).filter(table => {
+    // Tables 36-40 are AC, 1-35 are regular
+    return state.roomType === 'ac' ? table.id > 35 : table.id <= 35;
+  });
+}, [state.tables, state.roomType]);
 
   const activeOrders = useMemo(() => {
     return Object.values(state.tables).filter(table =>
