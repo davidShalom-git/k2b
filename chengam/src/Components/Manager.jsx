@@ -22,7 +22,7 @@ const Manager = ({
       updateState({ menuError: error });
       return;
     }
-    
+
     updateState({ loading: true, menuError: '' });
     try {
       await (action === 'add' ? addMenuItem() : updateMenuItem(id, state.newItem));
@@ -32,9 +32,9 @@ const Manager = ({
         loading: false
       });
     } catch (err) {
-      updateState({ 
-        menuError: `Failed to ${action} item: ${err.message || 'API Error'}`, 
-        loading: false 
+      updateState({
+        menuError: `Failed to ${action} item: ${err.message || 'API Error'}`,
+        loading: false
       });
     }
   };
@@ -139,7 +139,7 @@ const Manager = ({
           )}
           <div className="flex gap-3">
             <Button
-              onClick={() => isDaily ? 
+              onClick={() => isDaily ?
                 setDailyPrice(item.id, state.newItem.basePrice, state.newItem.isAvailable !== false) :
                 handleMenuAction(item ? 'update' : 'add', item?.id)
               }
@@ -214,10 +214,10 @@ const Manager = ({
   );
 
   const PageHeader = ({ title, icon: Icon, subtitle, action }) => (
-    <Card className="p-8 mb-8" gradient>
+    <Card className="p-10  mb-8" gradient>
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-4xl font-bold text-gray-900 flex items-center gap-4 mb-2">
+          <h2 className="text-3xl font-bold text-gray-900 flex items-center gap-4 mb-2">
             <div className="p-3 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl shadow-lg">
               <Icon className="w-8 h-8 text-white" />
             </div>
@@ -270,11 +270,10 @@ const Manager = ({
             <button
               key={tab.key}
               onClick={() => updateState({ managerTab: tab.key })}
-              className={`px-6 py-4 rounded-2xl font-semibold transition-all duration-300 flex items-center gap-3 whitespace-nowrap ${
-                state.managerTab === tab.key
+              className={`px-6 py-4 rounded-2xl font-semibold transition-all duration-300 flex items-center gap-3 whitespace-nowrap ${state.managerTab === tab.key
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xl scale-105'
                   : 'bg-white/80 backdrop-blur-sm hover:bg-white text-gray-700 hover:shadow-md'
-              }`}
+                }`}
             >
               <tab.icon className="w-5 h-5" />
               {tab.label}
@@ -326,14 +325,14 @@ const Manager = ({
             />
 
             <div className="flex w-full mb-4">
-  <Button
-    onClick={() => updateState({ showAddItem: true, menuError: '' })}
-    className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg transition-all duration-200 px-6 py-3 w-full sm:w-auto"
-  >
-    <Plus className="w-5 h-5 mr-2" />
-    Add Item
-  </Button>
-</div>
+              <Button
+                onClick={() => updateState({ showAddItem: true, menuError: '' })}
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg transition-all duration-200 px-6 py-3 w-full sm:w-auto"
+              >
+                <Plus className="w-5 h-5 mr-2" />
+                Add Item
+              </Button>
+            </div>
 
             {state.showAddItem && (
               <Card className="p-8 mb-8" gradient>
@@ -359,7 +358,7 @@ const Manager = ({
               </Card>
             )}
 
-            <Card className="p-8" gradient>
+            <Card className="p-10" gradient>
               <h3 className="text-2xl font-bold text-gray-900 mb-6">Menu Items</h3>
               <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
                 {menuItems.map(item => (
