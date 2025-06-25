@@ -248,13 +248,14 @@ const isValidStatusTransition = (currentStatus, newStatus) => {
 const initializeTables = async () => {
   const count = await Table.countDocuments();
   if (count === 0) {
-    // Create 5 default tables as an example
+    // Create 35 regular tables and 5 AC tables
     for (let i = 1; i <= 40; i++) {
       await Table.create({
         tableId: i,
         status: 'available',
         capacity: 4,
         location: `Table ${i}`,
+        roomType: i > 35 ? 'ac' : 'regular', // Tables 36-40 are AC
         orders: new Map(),
         total: 0,
         orderTime: null,
