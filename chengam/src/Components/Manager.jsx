@@ -323,16 +323,17 @@ const Manager = ({
               title="Menu Management"
               icon={Package}
               subtitle="Manage your restaurant's menu items and pricing"
-              action={
-                <Button
-                  onClick={() => updateState({ showAddItem: true, menuError: '' })}
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg transition-all duration-200 px-6 py-3"
-                >
-                  <Plus className="w-5 h-5 mr-2" />
-                  Add Item
-                </Button>
-              }
             />
+
+            <div className="flex w-full mb-4">
+  <Button
+    onClick={() => updateState({ showAddItem: true, menuError: '' })}
+    className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg transition-all duration-200 px-6 py-3 w-full sm:w-auto"
+  >
+    <Plus className="w-5 h-5 mr-2" />
+    Add Item
+  </Button>
+</div>
 
             {state.showAddItem && (
               <Card className="p-8 mb-8" gradient>
