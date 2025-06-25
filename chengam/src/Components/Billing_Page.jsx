@@ -67,7 +67,7 @@ const RestaurantPOS = () => {
 
  const filteredTables = useMemo(() => {
   return Object.values(state.tables).filter(table => {
-    // Tables 36-40 are AC, 1-35 are regular
+  
     return state.roomType === 'ac' ? table.id > 35 : table.id <= 35;
   });
 }, [state.tables, state.roomType]);

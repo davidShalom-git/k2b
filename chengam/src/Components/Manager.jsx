@@ -95,6 +95,7 @@ const Manager = ({
             onChange={(e) => updateState({ newItem: { ...state.newItem, basePrice: e.target.value } })}
             min="0"
             step="0.01"
+            autoFocus
           />
           {!isDaily && (
             <>
@@ -112,6 +113,7 @@ const Manager = ({
                 placeholder="Description"
                 value={state.newItem.description}
                 onChange={(e) => updateState({ newItem: { ...state.newItem, description: e.target.value } })}
+                autoFocus
               />
               <FormInput
                 type="number"
@@ -119,6 +121,7 @@ const Manager = ({
                 value={state.newItem.preparationTime}
                 onChange={(e) => updateState({ newItem: { ...state.newItem, preparationTime: e.target.value } })}
                 min="1"
+                autoFocus
               />
             </>
           )}
@@ -129,6 +132,7 @@ const Manager = ({
                 checked={state.newItem.isAvailable !== false}
                 onChange={(e) => updateState({ newItem: { ...state.newItem, isAvailable: e.target.checked } })}
                 className="w-5 h-5 accent-blue-600 rounded"
+                autoFocus
               />
               <span className="font-medium text-gray-700">Available</span>
             </label>
