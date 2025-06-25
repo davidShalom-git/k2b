@@ -168,23 +168,49 @@ router.post('/tables/:tableNumber/orders', async (req, res) => {
   try {
     const { tableNumber } = req.params;
     const { menuItemId, quantity } = req.body;
+
+    // Validate tableNumber
+    const parsedTableNumber = parseInt(tableNumber);
+    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid table number' });
+    }
+
+    // Validate request body
+    if (!menuItemId || !quantity || quantity <= 0) {
+      return res.status(400).json({ error: 'Menu item ID and positive quantity required' });
+    }
+
     const menuItem = await MenuItem.findById(menuItemId);
-    if (!menuItem || !menuItem.available) return res.status(404).json({ error: 'Menu item not found or unavailable' });
-    const table = await Table.findOne({ tableNumber: parseInt(tableNumber) });
-    if (!table) return res.status(404).json({ error: 'Table not found' });
+    if (!menuItem || !menuItem.available) {
+      return res.status(404).json({ error: 'Menu item not found or unavailable' });
+    }
+
+    const table = await Table.findOne({ tableNumber: parsedTableNumber });
+    if (!table) {
+      return res.status(404).json({ error: 'Table not found' });
+    }
+
     const orderIndex = table.orders.findIndex((order) => order.menuItemId.toString() === menuItemId);
     if (orderIndex !== -1) {
       table.orders[orderIndex].quantity += quantity;
       table.orders[orderIndex].amount = table.orders[orderIndex].quantity * table.orders[orderIndex].price;
     } else {
-      table.orders.push({ menuItemId, name: menuItem.name, price: menuItem.price, quantity, amount: menuItem.price * quantity });
+      table.orders.push({
+        menuItemId,
+        name: menuItem.name,
+        price: menuItem.price,
+        quantity,
+        amount: menuItem.price * quantity,
+      });
     }
+
     table.subtotal = table.orders.reduce((sum, order) => sum + order.amount, 0);
     table.status = 'occupied';
     table.lastUpdated = new Date();
     await table.save();
     res.json(table);
   } catch (error) {
+    console.error('Error in POST /tables/:tableNumber/orders:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -193,20 +219,44 @@ router.put('/tables/:tableNumber/orders/:orderIndex', async (req, res) => {
   try {
     const { tableNumber, orderIndex } = req.params;
     const { quantity } = req.body;
-    const table = await Table.findOne({ tableNumber: parseInt(tableNumber) });
-    if (!table) return res.status(404).json({ error: 'Table not found' });
-    if (quantity <= 0) {
-      table.orders.splice(parseInt(orderIndex), 1);
-    } else {
-      table.orders[parseInt(orderIndex)].quantity = quantity;
-      table.orders[parseInt(orderIndex)].amount = table.orders[parseInt(orderIndex)].price * quantity;
+
+    // Validate tableNumber
+    const parsedTableNumber = parseInt(tableNumber);
+    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid table number' });
     }
+
+    // Validate orderIndex and quantity
+    const parsedOrderIndex = parseInt(orderIndex);
+    if (isNaN(parsedOrderIndex) || parsedOrderIndex < 0) {
+      return res.status(400).json({ error: 'Invalid order index' });
+    }
+    if (!quantity || quantity < 0) {
+      return res.status(400).json({ error: 'Positive quantity required' });
+    }
+
+    const table = await Table.findOne({ tableNumber: parsedTableNumber });
+    if (!table) {
+      return res.status(404).json({ error: 'Table not found' });
+    }
+
+    if (quantity === 0) {
+      table.orders.splice(parsedOrderIndex, 1);
+    } else {
+      if (!table.orders[parsedOrderIndex]) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      table.orders[parsedOrderIndex].quantity = quantity;
+      table.orders[parsedOrderIndex].amount = table.orders[parsedOrderIndex].price * quantity;
+    }
+
     table.subtotal = table.orders.reduce((sum, order) => sum + order.amount, 0);
     table.status = table.orders.length ? 'occupied' : 'available';
     table.lastUpdated = new Date();
     await table.save();
     res.json(table);
   } catch (error) {
+    console.error('Error in PUT /tables/:tableNumber/orders/:orderIndex:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -214,8 +264,18 @@ router.put('/tables/:tableNumber/orders/:orderIndex', async (req, res) => {
 router.post('/tables/:tableNumber/bill', async (req, res) => {
   try {
     const { tableNumber } = req.params;
-    const table = await Table.findOne({ tableNumber: parseInt(tableNumber) });
-    if (!table || !table.orders.length) return res.status(400).json({ error: 'No orders found' });
+
+    // Validate tableNumber
+    const parsedTableNumber = parseInt(tableNumber);
+    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid table number' });
+    }
+
+    const table = await Table.findOne({ tableNumber: parsedTableNumber });
+    if (!table || !table.orders.length) {
+      return res.status(400).json({ error: 'No orders found' });
+    }
+
     const settings = await Settings.findOne();
     const gstRate = settings?.gstRate || 18;
     const subtotal = table.subtotal;
@@ -224,52 +284,73 @@ router.post('/tables/:tableNumber/bill', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const billCount = await Bill.countDocuments({ date: today });
     const billNumber = `BILL-${today}-${String(billCount + 1).padStart(4, '0')}`;
-    const bill = new Bill({ billNumber, tableNumber: parseInt(tableNumber), orders: table.orders, subtotal, gstRate, gstAmount, totalAmount, date: today });
+
+    const bill = new Bill({
+      billNumber,
+      tableNumber: parsedTableNumber,
+      orders: table.orders,
+      subtotal,
+      gstRate,
+      gstAmount,
+      totalAmount,
+      date: today,
+    });
     await bill.save();
+
     table.status = 'billed';
     table.gstAmount = gstAmount;
     table.totalAmount = totalAmount;
     await table.save();
+
     let revenue = await Revenue.findOne({ date: today });
-    if (!revenue) revenue = new Revenue({ date: today, totalRevenue: 0, totalOrders: 0, bills: [] });
+    if (!revenue) {
+      revenue = new Revenue({ date: today, totalRevenue: 0, totalOrders: 0, bills: [] });
+    }
     revenue.totalRevenue += totalAmount;
     revenue.totalOrders += 1;
     revenue.bills.push(bill._id);
     await revenue.save();
+
     res.json({ bill, table });
   } catch (error) {
+    console.error('Error in POST /tables/:tableNumber/bill:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 router.post('/tables/:tableNumber/clear', async (req, res) => {
   try {
+    const { tableNumber } = req.params;
+
+    // Validate tableNumber
+    const parsedTableNumber = parseInt(tableNumber);
+    if (isNaN(parsedTableNumber) || parsedTableNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid table number' });
+    }
+
     const table = await Table.findOneAndUpdate(
-      { tableNumber: parseInt(req.params.tableNumber) },
+      { tableNumber: parsedTableNumber },
       { status: 'available', orders: [], subtotal: 0, gstAmount: 0, totalAmount: 0, lastUpdated: new Date() },
       { new: true }
     );
-    if (!table) return res.status(404).json({ error: 'Table not found' });
+    if (!table) {
+      return res.status(404).json({ error: 'Table not found' });
+    }
     res.json(table);
   } catch (error) {
+    console.error('Error in POST /tables/:tableNumber/clear:', error);
     res.status(500).json({ error: error.message });
   }
 });
-
-// Bill Routes (Public)
-// ...existing code...
 
 // Bill Routes (Public)
 router.get('/bills', async (req, res) => {
   try {
     const { date, page = 1, limit = 50 } = req.query;
     const query = date ? { date } : {};
-    const bills = await Bill.find(query)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((page - 1) * limit);
+    const bills = await Bill.find(query).sort({ createdAt: -1 }).limit(parseInt(limit)).skip((page - 1) * limit);
     const total = await Bill.countDocuments(query);
-    res.json({ bills: bills, totalPages: Math.ceil(total / limit), currentPage: Number(page), total });
+    res.json({ bills, totalPages: Math.ceil(total / limit), currentPage: parseInt(page), total });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -287,8 +368,6 @@ router.get('/revenue/daily', async (req, res) => {
   }
 });
 
-
-
 // Dashboard Stats (Public)
 router.get('/dashboard/stats', async (req, res) => {
   try {
@@ -298,21 +377,21 @@ router.get('/dashboard/stats', async (req, res) => {
     const tableStats = {
       available: tables.filter(t => t.status === 'available').length,
       occupied: tables.filter(t => t.status === 'occupied').length,
-      billed: tables.filter(t => t.status === 'billed').length
+      billed: tables.filter(t => t.status === 'billed').length,
     };
     const recentBills = await Bill.find().sort({ createdAt: -1 }).limit(5);
     res.json({
       todayRevenue: todayRevenue ? todayRevenue.totalRevenue : 0,
       todayOrders: todayRevenue ? todayRevenue.totalOrders : 0,
-      tableStats: tableStats,
-      recentBills: recentBills
+      tableStats,
+      recentBills,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Manager Dashboard Stats Only(Protected)
+// Manager Dashboard Stats (Protected)
 router.get('/manager/dashboard/stats', verifyManager, async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -321,14 +400,14 @@ router.get('/manager/dashboard/stats', verifyManager, async (req, res) => {
       Revenue.findOne({ date: today }),
       Revenue.findOne({ date: yesterday }),
       MenuItem.countDocuments(),
-      MenuItem.countDocuments({ available: true })
+      MenuItem.countDocuments({ available: true }),
     ]);
     const tables = await Table.find();
     const tableStats = {
       available: tables.filter(t => t.status === 'available').length,
       occupied: tables.filter(t => t.status === 'occupied').length,
       billed: tables.filter(t => t.status === 'billed').length,
-      total: tables.length
+      total: tables.length,
     };
     const recentBills = await Bill.find().sort({ createdAt: -1 }).limit(10);
     res.json({
@@ -338,7 +417,7 @@ router.get('/manager/dashboard/stats', verifyManager, async (req, res) => {
       yesterdayOrders: yesterdayRevenue ? yesterdayRevenue.totalOrders : 0,
       tableStats,
       menuStats: { total: totalMenuItems, active: activeMenuItems, inactive: totalMenuItems - activeMenuItems },
-      recentBills
+      recentBills,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
