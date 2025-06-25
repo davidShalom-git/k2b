@@ -547,21 +547,27 @@ router.put('/tables/:tableId', async (req, res) => {
       return res.status(404).json({ error: 'Table not found' });
     }
 
-    // Convert orders object to Map if it exists
-    if (updates.orders && typeof updates.orders === 'object' && !(updates.orders instanceof Map)) {
-      updates.orders = new Map(Object.entries(updates.orders));
-    } else if (updates.orders && !(updates.orders instanceof Map)) {
-      return res.status(400).json({ error: 'Orders must be a valid object' });
+    // Normalize & convert orders object to Map if needed
+    if (updates.orders && typeof updates.orders === 'object') {
+      const normalizedOrders = {};
+      for (const [key, value] of Object.entries(updates.orders)) {
+        const numericQty = Number(value);
+        if (isNaN(numericQty) || numericQty < 0) {
+          return res.status(400).json({ error: `Invalid quantity for item ID ${key}` });
+        }
+        normalizedOrders[key] = numericQty;
+      }
+      updates.orders = new Map(Object.entries(normalizedOrders));
     }
 
-    // Validate status transition if status is being updated
+    // Validate status transition
     if (updates.status && !isValidStatusTransition(currentTable.status, updates.status)) {
-      return res.status(400).json({ 
-        error: `Invalid status transition from ${currentTable.status} to ${updates.status}` 
+      return res.status(400).json({
+        error: `Invalid status transition from ${currentTable.status} to ${updates.status}`
       });
     }
 
-    // Add timestamps based on status changes
+    // Timestamp management
     if (updates.status) {
       const currentTime = getCurrentTime();
       switch (updates.status) {
@@ -585,18 +591,17 @@ router.put('/tables/:tableId', async (req, res) => {
       }
     }
 
-    // Calculate total if orders are updated
+    // Calculate total if orders updated
     if (updates.orders) {
-      let orderTotals = 0;
+      let orderTotal = 0;
       for (const [itemId, qty] of updates.orders.entries()) {
-        // eslint-disable-next-line no-await-in-loop
         const menuItem = await MenuItem.findOne({ id: parseInt(itemId) });
         if (!menuItem) {
-          return res.status(400).json({ error: `Menu item with id ${itemId} not found` });
+          return res.status(400).json({ error: `Menu item with ID ${itemId} not found` });
         }
-        orderTotals += (menuItem.basePrice || 0) * qty;
+        orderTotal += (menuItem.basePrice || 0) * qty;
       }
-      updates.total = orderTotals;
+      updates.total = orderTotal;
     }
 
     updates.updatedAt = new Date();
@@ -630,7 +635,6 @@ router.put('/tables/:tableId', async (req, res) => {
     res.status(500).json({ error: `Failed to update table: ${error.message}` });
   }
 });
-
 
 // Delete table
 router.delete('/tables/:tableId', authenticateManager, async (req, res) => {
