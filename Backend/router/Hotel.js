@@ -447,5 +447,8 @@ const initializeDatabase = async () => {
   await initializeSettings();
 };
 
-module.exports.initializeDatabase = initializeDatabase;
-module.exports = router;
+
+module.exports = {
+  router,
+  initializeDatabase
+};

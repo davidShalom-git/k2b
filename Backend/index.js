@@ -2,9 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const hotelRoutes = require('./router/Hotel');
 const waiterRoutes = require('./router/Waiter');
-const { initializeDatabase } = require('./router/Hotel');
+const { router: hotelRoutes, initializeDatabase } = require('./router/Hotel');
 require('dotenv').config();
 
 const app = express();
@@ -48,12 +47,7 @@ app.use((err, req, res, next) => {
 });
 
 // 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.originalUrl
-  });
-});
+
 
 // MongoDB connection
 const connectDB = async () => {
